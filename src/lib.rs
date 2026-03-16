@@ -3,6 +3,16 @@
 //! Provides typed Rust structures for jCard documents with serde
 //! serialization/deserialization matching the RFC 7095 JSON array format.
 //!
+//! # Lenient Parsing
+//!
+//! [`JCard::from_json`] returns [`Parsed<JCard>`] — the best-effort parse
+//! result plus any [`ParseWarning`] entries for malformed properties.
+//! This follows the EIDO pattern for NG9-1-1: calltakers see all
+//! available data while discrepancy reports capture what went wrong.
+//!
+//! The serde [`Deserialize`](serde::Deserialize) impl is also available
+//! for simple use cases where warnings are not needed.
+//!
 //! # Value Types
 //!
 //! All RFC 7095 §3.5 value types are supported as [`PropertyValue`] variants:
@@ -21,25 +31,69 @@
 //! ```
 //! use jcard::JCard;
 //!
-//! let jcard = JCard::builder()
-//!     .fn_("Jane Doe")
-//!     .n("Doe", "Jane", "", "", "")
-//!     .email("jane.doe@example.com")
-//!     .build();
+//! // Lenient parsing with warnings
+//! let parsed = JCard::from_json(r#"["vcard",[["version",{},"text","4.0"]]]"#).unwrap();
+//! assert!(!parsed.has_warnings());
 //!
-//! let json = serde_json::to_string(&jcard).unwrap();
-//! let parsed: JCard = serde_json::from_str(&json).unwrap();
-//! assert_eq!(jcard, parsed);
+//! // Simple serde path (warnings discarded)
+//! let jcard: JCard = serde_json::from_str(r#"["vcard",[["version",{},"text","4.0"]]]"#).unwrap();
 //! ```
 
 mod deserialize;
+pub mod error;
 pub mod property;
 mod serialize;
 
 use std::fmt;
 use std::str::FromStr;
 
+pub use error::Error;
 pub use property::{ParamValue, Property, PropertyValue, StructuredComponent};
+
+/// Warning emitted during lenient jCard parsing.
+///
+/// When a property can't be fully parsed, the parser preserves what it can
+/// and emits a warning describing what went wrong. The raw unparsed value
+/// is available in [`raw_value`](Self::raw_value) when applicable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseWarning {
+    /// Path to the problematic element (e.g. `properties[3]`).
+    pub path: String,
+    /// Human-readable description of the problem.
+    pub message: String,
+    /// Unparsed source text, preserved for display.
+    pub raw_value: Option<String>,
+}
+
+impl fmt::Display for ParseWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.raw_value {
+            Some(raw) => write!(f, "{}: {} (raw: {raw})", self.path, self.message),
+            None => write!(f, "{}: {}", self.path, self.message),
+        }
+    }
+}
+
+/// Result of lenient jCard parsing: the parsed value plus any warnings.
+///
+/// Even when `warnings` is non-empty, `value` contains everything that
+/// could be successfully parsed.
+#[derive(Debug, Clone)]
+pub struct Parsed<T> {
+    /// Best-effort parse result.
+    pub value: T,
+    /// Problems encountered during parsing.
+    pub warnings: Vec<ParseWarning>,
+}
+
+impl<T> Parsed<T> {
+    /// Returns `true` if any warnings were collected during parsing.
+    pub fn has_warnings(&self) -> bool {
+        !self
+            .warnings
+            .is_empty()
+    }
+}
 
 /// A jCard document (RFC 7095).
 ///
@@ -96,6 +150,23 @@ impl JCard {
             .filter(|p| p.name == name)
             .collect()
     }
+
+    /// Parses a jCard from JSON with lenient error handling.
+    ///
+    /// Returns [`Parsed<JCard>`] containing the best-effort parse result
+    /// and any [`ParseWarning`] entries for malformed properties.
+    /// Returns [`Error`] only for structural failures (invalid JSON or
+    /// not a jCard at all).
+    pub fn from_json(json: &str) -> Result<Parsed<JCard>, Error> {
+        let value: serde_json::Value =
+            serde_json::from_str(json).map_err(|e| Error::InvalidJson(Box::new(e)))?;
+        let mut warnings = Vec::new();
+        let jcard = deserialize::parse_jcard_value(&value, &mut warnings)?;
+        Ok(Parsed {
+            value: jcard,
+            warnings,
+        })
+    }
 }
 
 impl Default for JCard {
@@ -114,10 +185,10 @@ impl fmt::Display for JCard {
 }
 
 impl FromStr for JCard {
-    type Err = serde_json::Error;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        serde_json::from_str(s)
+        Ok(Self::from_json(s)?.value)
     }
 }
 
@@ -618,5 +689,159 @@ mod tests {
         let json = serde_json::to_string(&jcard).unwrap();
         let parsed: JCard = serde_json::from_str(&json).unwrap();
         assert_eq!(jcard, parsed);
+    }
+
+    #[test]
+    fn from_json_clean_input_no_warnings() {
+        let parsed =
+            JCard::from_json(r#"["vcard",[["version",{},"text","4.0"],["fn",{},"text","Test"]]]"#)
+                .unwrap();
+        assert!(!parsed.has_warnings());
+        assert_eq!(
+            parsed
+                .value
+                .properties()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn from_json_short_tuple_warns_and_drops() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["fn",{},"text"],
+            ["email",{},"text","ok@example.com"]
+        ]]"#;
+
+        let parsed = JCard::from_json(json).unwrap();
+        assert_eq!(
+            parsed
+                .warnings
+                .len(),
+            1
+        );
+        assert!(parsed.warnings[0]
+            .message
+            .contains("3 elements"));
+        assert_eq!(
+            parsed
+                .value
+                .properties()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn from_json_value_type_mismatch_warns_and_preserves() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["fn",{},"text",42]
+        ]]"#;
+
+        let parsed = JCard::from_json(json).unwrap();
+        assert_eq!(
+            parsed
+                .warnings
+                .len(),
+            1
+        );
+        assert!(parsed.warnings[0]
+            .message
+            .contains("expected text"));
+        assert_eq!(
+            parsed
+                .value
+                .properties()
+                .len(),
+            2
+        );
+        assert_eq!(
+            *parsed
+                .value
+                .get("fn")
+                .unwrap()
+                .value(),
+            PropertyValue::Text("42".to_string()),
+        );
+    }
+
+    #[test]
+    fn from_json_bad_params_warns_and_preserves() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["fn","not-an-object","text","Test"]
+        ]]"#;
+
+        let parsed = JCard::from_json(json).unwrap();
+        assert_eq!(
+            parsed
+                .warnings
+                .len(),
+            1
+        );
+        assert!(parsed.warnings[0]
+            .message
+            .contains("parameters is not an object"));
+        let fn_prop = parsed
+            .value
+            .get("fn")
+            .unwrap();
+        assert!(fn_prop
+            .parameters
+            .is_empty());
+        assert_eq!(*fn_prop.value(), PropertyValue::Text("Test".to_string()));
+    }
+
+    #[test]
+    fn from_json_wrong_tag_is_error() {
+        let result = JCard::from_json(r#"["vcalendar",[]]"#);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, Error::InvalidStructure(_)));
+        assert!(err
+            .to_string()
+            .contains("vcalendar"));
+    }
+
+    #[test]
+    fn from_json_invalid_json_is_error() {
+        let result = JCard::from_json("{not json}");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), Error::InvalidJson(_)));
+    }
+
+    #[test]
+    fn from_json_missing_version_warns() {
+        let json = r#"["vcard",[["fn",{},"text","Test"]]]"#;
+        let parsed = JCard::from_json(json).unwrap();
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|w| w
+                .message
+                .contains("version")));
+    }
+
+    #[test]
+    fn from_json_rfc_appendix_b_no_warnings() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["fn",{},"text","John Doe"],
+            ["n",{},"text",["Doe","John","","",""]],
+            ["bday",{},"date-and-or-time","--02-03"],
+            ["gender",{},"text","M"],
+            ["lang",{"pref":"1"},"language-tag","fr"],
+            ["tel",{"type":["work","voice"],"pref":"1"},"uri","tel:+15551234567;ext=102"],
+            ["email",{"type":"work"},"text","john.doe@example.com"]
+        ]]"#;
+
+        let parsed = JCard::from_json(json).unwrap();
+        assert!(
+            !parsed.has_warnings(),
+            "unexpected warnings: {:?}",
+            parsed.warnings
+        );
     }
 }
