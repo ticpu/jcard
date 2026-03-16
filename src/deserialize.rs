@@ -90,13 +90,14 @@ impl RawProperty {
             None => std::collections::BTreeMap::new(),
         };
 
-        let value = PropertyValue::from_json(&value_type, &arr[3])?;
+        let values: Vec<PropertyValue> = arr[3..]
+            .iter()
+            .filter_map(|v| PropertyValue::from_json(&value_type, v))
+            .collect();
+        if values.is_empty() {
+            return None;
+        }
 
-        Some(Property {
-            name,
-            parameters,
-            value_type,
-            value,
-        })
+        Some(Property::from_raw(name, parameters, value_type, values))
     }
 }

@@ -258,17 +258,17 @@ mod tests {
             4
         );
         assert_eq!(
-            jcard
+            *jcard
                 .get("version")
                 .unwrap()
-                .value,
+                .value(),
             PropertyValue::Text("4.0".to_string())
         );
         assert_eq!(
-            jcard
+            *jcard
                 .get("fn")
                 .unwrap()
-                .value,
+                .value(),
             PropertyValue::Text("Jane Doe".to_string())
         );
     }
@@ -332,17 +332,17 @@ mod tests {
             8
         );
         assert_eq!(
-            jcard
+            *jcard
                 .get("fn")
                 .unwrap()
-                .value,
+                .value(),
             PropertyValue::Text("John Doe".to_string()),
         );
         assert_eq!(
-            jcard
+            *jcard
                 .get("n")
                 .unwrap()
-                .value,
+                .value(),
             PropertyValue::Structured(vec![
                 StructuredComponent::Text("Doe".to_string()),
                 StructuredComponent::Text("John".to_string()),
@@ -357,7 +357,7 @@ mod tests {
             .unwrap();
         assert_eq!(bday.value_type, "date-and-or-time");
         assert_eq!(
-            bday.value,
+            *bday.value(),
             PropertyValue::DateAndOrTime("--02-03".to_string()),
         );
 
@@ -365,7 +365,7 @@ mod tests {
             .get("lang")
             .unwrap();
         assert_eq!(lang.value_type, "language-tag");
-        assert_eq!(lang.value, PropertyValue::LanguageTag("fr".to_string()),);
+        assert_eq!(*lang.value(), PropertyValue::LanguageTag("fr".to_string()),);
 
         let tel = jcard
             .get("tel")
@@ -406,7 +406,7 @@ mod tests {
             .get("tel")
             .unwrap();
         assert_eq!(
-            tel.value,
+            *tel.value(),
             PropertyValue::Uri("tel:+15555550100".to_string())
         );
         assert!(tel
@@ -424,10 +424,10 @@ mod tests {
             1
         );
         assert_eq!(
-            jcard
+            *jcard
                 .get("version")
                 .unwrap()
-                .value,
+                .value(),
             PropertyValue::Text("4.0".to_string())
         );
     }
@@ -478,14 +478,14 @@ mod tests {
             .get("tz")
             .unwrap();
         assert_eq!(tz.value_type, "utc-offset");
-        assert_eq!(tz.value, PropertyValue::UtcOffset("-05:00".to_string()));
+        assert_eq!(*tz.value(), PropertyValue::UtcOffset("-05:00".to_string()));
 
         let unknown = jcard
             .get("x-unknown-prop")
             .unwrap();
         assert_eq!(unknown.value_type, "unknown");
         assert_eq!(
-            unknown.value,
+            *unknown.value(),
             PropertyValue::Unknown("some;raw\\,data".to_string()),
         );
     }
@@ -504,7 +504,7 @@ mod tests {
             .get("adr")
             .unwrap();
         assert_eq!(
-            adr.value,
+            *adr.value(),
             PropertyValue::Structured(vec![
                 StructuredComponent::Text(String::new()),
                 StructuredComponent::Text(String::new()),
@@ -563,5 +563,60 @@ mod tests {
         let json_out = serde_json::to_string(&jcard).unwrap();
         let reparsed: serde_json::Value = serde_json::from_str(&json_out).unwrap();
         assert_eq!(reparsed[1][1][2], "x-mytype");
+    }
+
+    #[test]
+    fn multi_valued_property_roundtrip() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["categories",{},"text","computers","cameras"]
+        ]]"#;
+
+        let jcard: JCard = serde_json::from_str(json).unwrap();
+        let cat = jcard
+            .get("categories")
+            .unwrap();
+        assert_eq!(
+            cat.values(),
+            &[
+                PropertyValue::Text("computers".to_string()),
+                PropertyValue::Text("cameras".to_string()),
+            ]
+        );
+        assert_eq!(*cat.value(), PropertyValue::Text("computers".to_string()),);
+
+        let json_out = serde_json::to_string(&jcard).unwrap();
+        let reparsed: JCard = serde_json::from_str(&json_out).unwrap();
+        assert_eq!(jcard, reparsed);
+
+        let raw: serde_json::Value = serde_json::from_str(&json_out).unwrap();
+        assert_eq!(raw[1][1][3], "computers");
+        assert_eq!(raw[1][1][4], "cameras");
+    }
+
+    #[test]
+    fn multi_valued_via_builder() {
+        let jcard = JCard::builder()
+            .property(Property::multi(
+                "categories",
+                vec![
+                    PropertyValue::Text("computers".to_string()),
+                    PropertyValue::Text("cameras".to_string()),
+                ],
+            ))
+            .build();
+
+        let cat = jcard
+            .get("categories")
+            .unwrap();
+        assert_eq!(
+            cat.values()
+                .len(),
+            2
+        );
+
+        let json = serde_json::to_string(&jcard).unwrap();
+        let parsed: JCard = serde_json::from_str(&json).unwrap();
+        assert_eq!(jcard, parsed);
     }
 }

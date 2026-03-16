@@ -32,15 +32,14 @@ struct PropertyTuple<'a>(&'a Property);
 impl Serialize for PropertyTuple<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let prop = self.0;
-        let mut seq = serializer.serialize_seq(Some(4))?;
+        let values = prop.values();
+        let mut seq = serializer.serialize_seq(Some(3 + values.len()))?;
         seq.serialize_element(&prop.name)?;
         seq.serialize_element(&ParametersMap(&prop.parameters))?;
         seq.serialize_element(&prop.value_type)?;
-        seq.serialize_element(
-            &prop
-                .value
-                .to_json(),
-        )?;
+        for v in values {
+            seq.serialize_element(&v.to_json())?;
+        }
         seq.end()
     }
 }

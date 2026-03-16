@@ -274,7 +274,9 @@ fn parse_structured(arr: &[serde_json::Value]) -> Vec<StructuredComponent> {
 /// A single jCard property.
 ///
 /// Per RFC 7095 §3, a property is serialized as a JSON array tuple:
-/// `[name, parameters, type, value]`.
+/// `[name, parameters, type, value1, value2, ...]`.
+/// Most properties have a single value; multi-valued properties (§3.3)
+/// like `CATEGORIES` carry additional values as extra array elements.
 ///
 /// The [`value_type`](Self::value_type) field stores the RFC 7095 type
 /// identifier exactly as received, ensuring round-trip fidelity even for
@@ -287,12 +289,11 @@ pub struct Property {
     pub parameters: BTreeMap<String, ParamValue>,
     /// The RFC 7095 type identifier (e.g. `"text"`, `"uri"`, `"date-time"`).
     pub value_type: String,
-    /// The typed property value.
-    pub value: PropertyValue,
+    values: Vec<PropertyValue>,
 }
 
 impl Property {
-    /// Creates a new property with the given name and value.
+    /// Creates a single-valued property.
     ///
     /// The type identifier is derived from the [`PropertyValue`] variant.
     pub fn new(name: impl Into<String>, value: PropertyValue) -> Self {
@@ -302,8 +303,48 @@ impl Property {
             value_type: value
                 .default_type()
                 .to_string(),
-            value,
+            values: vec![value],
         }
+    }
+
+    /// Creates a multi-valued property (RFC 7095 §3.3).
+    ///
+    /// Panics if `values` is empty.
+    pub fn multi(name: impl Into<String>, values: Vec<PropertyValue>) -> Self {
+        assert!(!values.is_empty(), "property must have at least one value");
+        Self {
+            name: name.into(),
+            parameters: BTreeMap::new(),
+            value_type: values[0]
+                .default_type()
+                .to_string(),
+            values,
+        }
+    }
+
+    pub(crate) fn from_raw(
+        name: String,
+        parameters: BTreeMap<String, ParamValue>,
+        value_type: String,
+        values: Vec<PropertyValue>,
+    ) -> Self {
+        Self {
+            name,
+            parameters,
+            value_type,
+            values,
+        }
+    }
+
+    /// Returns the first (or only) value.
+    pub fn value(&self) -> &PropertyValue {
+        &self.values[0]
+    }
+
+    /// Returns all values. Single-valued properties return a one-element slice.
+    /// Multi-valued properties (RFC 7095 §3.3) return multiple elements.
+    pub fn values(&self) -> &[PropertyValue] {
+        &self.values
     }
 
     /// Adds a parameter to this property (builder pattern).
