@@ -35,7 +35,7 @@ impl Serialize for PropertyTuple<'_> {
         let mut seq = serializer.serialize_seq(Some(4))?;
         seq.serialize_element(&prop.name)?;
         seq.serialize_element(&ParametersMap(&prop.parameters))?;
-        seq.serialize_element(prop.value_type())?;
+        seq.serialize_element(&prop.value_type)?;
         seq.serialize_element(
             &prop
                 .value

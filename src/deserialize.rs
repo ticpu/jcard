@@ -62,8 +62,9 @@ impl RawProperty {
             .as_str()?
             .to_string();
         let params_value = &arr[1];
-        let value_type = arr[2].as_str()?;
-        let values = &arr[3..];
+        let value_type = arr[2]
+            .as_str()?
+            .to_string();
 
         let parameters = match params_value.as_object() {
             Some(map) => map
@@ -89,11 +90,12 @@ impl RawProperty {
             None => std::collections::BTreeMap::new(),
         };
 
-        let value = PropertyValue::from_json(value_type, values)?;
+        let value = PropertyValue::from_json(&value_type, &arr[3])?;
 
         Some(Property {
             name,
             parameters,
+            value_type,
             value,
         })
     }

@@ -50,32 +50,91 @@ impl fmt::Display for ParamValue {
     }
 }
 
+/// A component within a structured property value (RFC 7095 §3.3.1.3).
+///
+/// Structured values like `N` and `ADR` contain components separated by
+/// semicolons in vCard. In jCard, these become array elements. Each
+/// component is either a single value or a nested array when the component
+/// itself has multiple values (e.g., multiple street lines in `ADR`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum StructuredComponent {
+    /// A single text component.
+    Text(String),
+    /// Multiple values for one component (nested array in JSON).
+    Multi(Vec<String>),
+}
+
+impl fmt::Display for StructuredComponent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text(s) => write!(f, "{s}"),
+            Self::Multi(v) => write!(f, "{}", v.join(",")),
+        }
+    }
+}
+
 /// The value of a jCard property.
 ///
-/// Per RFC 7095 §3.3, each property has a typed value. The type identifier
-/// string is derived from the variant (e.g. `Text` → `"text"`).
+/// Covers all value types defined in RFC 7095 §3.5 plus structured values
+/// from §3.3.1.3. The type identifier string (e.g. `"text"`, `"uri"`)
+/// is stored separately on [`Property::value_type`] for round-trip fidelity.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropertyValue {
-    /// Plain text value (`"text"` type identifier).
+    /// Plain text value (`"text"`). RFC 7095 §3.5.1.
     Text(String),
-    /// Structured text with components (`"text"` type, serialized as JSON array).
-    /// Used for properties like `N` with multiple name parts.
-    TextList(Vec<String>),
-    /// URI value (`"uri"` type identifier).
+    /// URI value (`"uri"`). RFC 7095 §3.5.2.
     Uri(String),
-    /// Boolean value (`"boolean"` type identifier).
+    /// Date value (`"date"`). RFC 7095 §3.5.3.
+    Date(String),
+    /// Time value (`"time"`). RFC 7095 §3.5.4.
+    Time(String),
+    /// Date-time value (`"date-time"`). RFC 7095 §3.5.5.
+    DateTime(String),
+    /// Date and/or time value (`"date-and-or-time"`). RFC 7095 §3.5.6.
+    DateAndOrTime(String),
+    /// Timestamp value (`"timestamp"`). RFC 7095 §3.5.7.
+    Timestamp(String),
+    /// Boolean value (`"boolean"`). RFC 7095 §3.5.8.
     Boolean(bool),
-    /// Integer value (`"integer"` type identifier).
+    /// Integer value (`"integer"`). RFC 7095 §3.5.9.
     Integer(i64),
-    /// Floating-point value (`"float"` type identifier).
+    /// Floating-point value (`"float"`). RFC 7095 §3.5.10.
     Float(f64),
+    /// UTC offset value (`"utc-offset"`). RFC 7095 §3.5.11.
+    UtcOffset(String),
+    /// Language tag value (`"language-tag"`). RFC 7095 §3.5.12.
+    LanguageTag(String),
+    /// Unknown value type for round-tripping (`"unknown"`). RFC 7095 §5.
+    Unknown(String),
+    /// Structured property value (`"text"` type). RFC 7095 §3.3.1.3.
+    Structured(Vec<StructuredComponent>),
 }
 
 impl fmt::Display for PropertyValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Text(s) | Self::Uri(s) => write!(f, "{s}"),
-            Self::TextList(v) => write!(f, "{}", v.join(";")),
+            Self::Text(s)
+            | Self::Uri(s)
+            | Self::Date(s)
+            | Self::Time(s)
+            | Self::DateTime(s)
+            | Self::DateAndOrTime(s)
+            | Self::Timestamp(s)
+            | Self::UtcOffset(s)
+            | Self::LanguageTag(s)
+            | Self::Unknown(s) => write!(f, "{s}"),
+            Self::Structured(components) => {
+                for (i, c) in components
+                    .iter()
+                    .enumerate()
+                {
+                    if i > 0 {
+                        write!(f, ";")?;
+                    }
+                    write!(f, "{c}")?;
+                }
+                Ok(())
+            }
             Self::Boolean(b) => write!(f, "{b}"),
             Self::Integer(i) => write!(f, "{i}"),
             Self::Float(n) => write!(f, "{n}"),
@@ -84,88 +143,165 @@ impl fmt::Display for PropertyValue {
 }
 
 impl PropertyValue {
-    /// Returns the RFC 7095 type identifier string for this value.
-    pub fn value_type(&self) -> &'static str {
+    /// Returns the default RFC 7095 type identifier for this value variant.
+    pub fn default_type(&self) -> &'static str {
         match self {
-            Self::Text(_) | Self::TextList(_) => "text",
+            Self::Text(_) | Self::Structured(_) => "text",
             Self::Uri(_) => "uri",
+            Self::Date(_) => "date",
+            Self::Time(_) => "time",
+            Self::DateTime(_) => "date-time",
+            Self::DateAndOrTime(_) => "date-and-or-time",
+            Self::Timestamp(_) => "timestamp",
             Self::Boolean(_) => "boolean",
             Self::Integer(_) => "integer",
             Self::Float(_) => "float",
+            Self::UtcOffset(_) => "utc-offset",
+            Self::LanguageTag(_) => "language-tag",
+            Self::Unknown(_) => "unknown",
         }
     }
 
     pub(crate) fn to_json(&self) -> serde_json::Value {
         match self {
-            Self::Text(s) => serde_json::Value::String(s.clone()),
-            Self::TextList(v) => serde_json::Value::Array(
-                v.iter()
-                    .map(|s| serde_json::Value::String(s.clone()))
+            Self::Text(s)
+            | Self::Uri(s)
+            | Self::Date(s)
+            | Self::Time(s)
+            | Self::DateTime(s)
+            | Self::DateAndOrTime(s)
+            | Self::Timestamp(s)
+            | Self::UtcOffset(s)
+            | Self::LanguageTag(s)
+            | Self::Unknown(s) => serde_json::Value::String(s.clone()),
+            Self::Structured(components) => serde_json::Value::Array(
+                components
+                    .iter()
+                    .map(|c| match c {
+                        StructuredComponent::Text(s) => serde_json::Value::String(s.clone()),
+                        StructuredComponent::Multi(v) => serde_json::Value::Array(
+                            v.iter()
+                                .map(|s| serde_json::Value::String(s.clone()))
+                                .collect(),
+                        ),
+                    })
                     .collect(),
             ),
-            Self::Uri(s) => serde_json::Value::String(s.clone()),
             Self::Boolean(b) => serde_json::Value::Bool(*b),
             Self::Integer(i) => serde_json::json!(i),
             Self::Float(f) => serde_json::json!(f),
         }
     }
 
-    pub(crate) fn from_json(value_type: &str, values: &[serde_json::Value]) -> Option<Self> {
-        let first = values.first()?;
+    pub(crate) fn from_json(value_type: &str, value: &serde_json::Value) -> Option<Self> {
         match value_type {
-            "text" => match first {
+            "text" => match value {
                 serde_json::Value::String(s) => Some(Self::Text(s.clone())),
-                serde_json::Value::Array(arr) => {
-                    let parts: Vec<String> = arr
-                        .iter()
-                        .map(|v| match v {
-                            serde_json::Value::String(s) => s.clone(),
-                            other => other.to_string(),
-                        })
-                        .collect();
-                    Some(Self::TextList(parts))
+                serde_json::Value::Array(arr) => Some(Self::Structured(parse_structured(arr))),
+                _ => None,
+            },
+            "uri" => value
+                .as_str()
+                .map(|s| Self::Uri(s.to_string())),
+            "date" => value
+                .as_str()
+                .map(|s| Self::Date(s.to_string())),
+            "time" => value
+                .as_str()
+                .map(|s| Self::Time(s.to_string())),
+            "date-time" => value
+                .as_str()
+                .map(|s| Self::DateTime(s.to_string())),
+            "date-and-or-time" => value
+                .as_str()
+                .map(|s| Self::DateAndOrTime(s.to_string())),
+            "timestamp" => value
+                .as_str()
+                .map(|s| Self::Timestamp(s.to_string())),
+            "boolean" => value
+                .as_bool()
+                .map(Self::Boolean),
+            "integer" => value
+                .as_i64()
+                .map(Self::Integer),
+            "float" => value
+                .as_f64()
+                .map(Self::Float),
+            "utc-offset" => value
+                .as_str()
+                .map(|s| Self::UtcOffset(s.to_string())),
+            "language-tag" => value
+                .as_str()
+                .map(|s| Self::LanguageTag(s.to_string())),
+            "unknown" => value
+                .as_str()
+                .map(|s| Self::Unknown(s.to_string())),
+            _ => match value {
+                serde_json::Value::String(s) => Some(Self::Text(s.clone())),
+                serde_json::Value::Bool(b) => Some(Self::Boolean(*b)),
+                serde_json::Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        Some(Self::Integer(i))
+                    } else {
+                        n.as_f64()
+                            .map(Self::Float)
+                    }
                 }
                 _ => None,
             },
-            "uri" => first
-                .as_str()
-                .map(|s| Self::Uri(s.to_string())),
-            "boolean" => first
-                .as_bool()
-                .map(Self::Boolean),
-            "integer" => first
-                .as_i64()
-                .map(Self::Integer),
-            "float" => first
-                .as_f64()
-                .map(Self::Float),
-            _ => first
-                .as_str()
-                .map(|s| Self::Text(s.to_string())),
         }
     }
+}
+
+fn parse_structured(arr: &[serde_json::Value]) -> Vec<StructuredComponent> {
+    arr.iter()
+        .map(|v| match v {
+            serde_json::Value::String(s) => StructuredComponent::Text(s.clone()),
+            serde_json::Value::Array(inner) => StructuredComponent::Multi(
+                inner
+                    .iter()
+                    .map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .collect(),
+            ),
+            other => StructuredComponent::Text(other.to_string()),
+        })
+        .collect()
 }
 
 /// A single jCard property.
 ///
 /// Per RFC 7095 §3, a property is serialized as a JSON array tuple:
 /// `[name, parameters, type, value]`.
+///
+/// The [`value_type`](Self::value_type) field stores the RFC 7095 type
+/// identifier exactly as received, ensuring round-trip fidelity even for
+/// extension types not covered by [`PropertyValue`] variants.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Property {
     /// Lowercase property name (e.g. `"fn"`, `"n"`, `"email"`).
     pub name: String,
     /// Property parameters as key-value pairs.
     pub parameters: BTreeMap<String, ParamValue>,
+    /// The RFC 7095 type identifier (e.g. `"text"`, `"uri"`, `"date-time"`).
+    pub value_type: String,
     /// The typed property value.
     pub value: PropertyValue,
 }
 
 impl Property {
-    /// Creates a new property with the given name and value, and no parameters.
+    /// Creates a new property with the given name and value.
+    ///
+    /// The type identifier is derived from the [`PropertyValue`] variant.
     pub fn new(name: impl Into<String>, value: PropertyValue) -> Self {
         Self {
             name: name.into(),
             parameters: BTreeMap::new(),
+            value_type: value
+                .default_type()
+                .to_string(),
             value,
         }
     }
@@ -175,11 +311,5 @@ impl Property {
         self.parameters
             .insert(key.into(), value.into());
         self
-    }
-
-    /// Returns the RFC 7095 type identifier for this property's value.
-    pub fn value_type(&self) -> &str {
-        self.value
-            .value_type()
     }
 }

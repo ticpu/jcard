@@ -3,6 +3,19 @@
 //! Provides typed Rust structures for jCard documents with serde
 //! serialization/deserialization matching the RFC 7095 JSON array format.
 //!
+//! # Value Types
+//!
+//! All RFC 7095 §3.5 value types are supported as [`PropertyValue`] variants:
+//! text, uri, date, time, date-time, date-and-or-time, timestamp,
+//! boolean, integer, float, utc-offset, language-tag, and unknown.
+//! Structured property values (e.g. `N`, `ADR`) use
+//! [`PropertyValue::Structured`] with [`StructuredComponent`] elements,
+//! including nested arrays per §3.3.1.3.
+//!
+//! The type identifier is stored on [`Property::value_type`] separately
+//! from the value, ensuring round-trip fidelity for all types including
+//! extensions.
+//!
 //! # Examples
 //!
 //! ```
@@ -26,7 +39,7 @@ mod serialize;
 use std::fmt;
 use std::str::FromStr;
 
-pub use property::{ParamValue, Property, PropertyValue};
+pub use property::{ParamValue, Property, PropertyValue, StructuredComponent};
 
 /// A jCard document (RFC 7095).
 ///
@@ -137,12 +150,12 @@ impl JCardBuilder {
     ) -> Self {
         self.property(Property::new(
             "n",
-            PropertyValue::TextList(vec![
-                family.to_string(),
-                given.to_string(),
-                additional.to_string(),
-                prefix.to_string(),
-                suffix.to_string(),
+            PropertyValue::Structured(vec![
+                StructuredComponent::Text(family.to_string()),
+                StructuredComponent::Text(given.to_string()),
+                StructuredComponent::Text(additional.to_string()),
+                StructuredComponent::Text(prefix.to_string()),
+                StructuredComponent::Text(suffix.to_string()),
             ]),
         ))
     }
@@ -186,6 +199,37 @@ impl JCardBuilder {
         self.property(Property::new(
             "title",
             PropertyValue::Text(title.to_string()),
+        ))
+    }
+
+    /// Adds an `ADR` (structured address) property per RFC 6350 §6.3.1.
+    pub fn adr(self, components: Vec<StructuredComponent>) -> Self {
+        self.property(Property::new("adr", PropertyValue::Structured(components)))
+    }
+
+    /// Adds a `BDAY` (birthday) property with a date-and-or-time value.
+    pub fn bday(self, value: &str) -> Self {
+        self.property(Property::new(
+            "bday",
+            PropertyValue::DateAndOrTime(value.to_string()),
+        ))
+    }
+
+    /// Adds a `URL` property.
+    pub fn url(self, uri: &str) -> Self {
+        self.property(Property::new("url", PropertyValue::Uri(uri.to_string())))
+    }
+
+    /// Adds a `NOTE` property.
+    pub fn note(self, text: &str) -> Self {
+        self.property(Property::new("note", PropertyValue::Text(text.to_string())))
+    }
+
+    /// Adds a `REV` (revision) property with a timestamp value.
+    pub fn rev(self, timestamp: &str) -> Self {
+        self.property(Property::new(
+            "rev",
+            PropertyValue::Timestamp(timestamp.to_string()),
         ))
     }
 
@@ -266,8 +310,7 @@ mod tests {
         assert_eq!(fn_prop[3], "Test User");
     }
 
-    /// Uses the example from RFC 7095 Appendix B, with synthetic test data
-    /// substituted for any real-world values.
+    /// RFC 7095 Appendix B example with synthetic test data.
     #[test]
     fn deserialize_rfc7095_example() {
         let json = r#"["vcard",[
@@ -300,14 +343,29 @@ mod tests {
                 .get("n")
                 .unwrap()
                 .value,
-            PropertyValue::TextList(vec![
-                "Doe".to_string(),
-                "John".to_string(),
-                String::new(),
-                String::new(),
-                String::new(),
+            PropertyValue::Structured(vec![
+                StructuredComponent::Text("Doe".to_string()),
+                StructuredComponent::Text("John".to_string()),
+                StructuredComponent::Text(String::new()),
+                StructuredComponent::Text(String::new()),
+                StructuredComponent::Text(String::new()),
             ]),
         );
+
+        let bday = jcard
+            .get("bday")
+            .unwrap();
+        assert_eq!(bday.value_type, "date-and-or-time");
+        assert_eq!(
+            bday.value,
+            PropertyValue::DateAndOrTime("--02-03".to_string()),
+        );
+
+        let lang = jcard
+            .get("lang")
+            .unwrap();
+        assert_eq!(lang.value_type, "language-tag");
+        assert_eq!(lang.value, PropertyValue::LanguageTag("fr".to_string()),);
 
         let tel = jcard
             .get("tel")
@@ -387,5 +445,123 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn all_value_types_roundtrip() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["fn",{},"text","Test"],
+            ["bday",{},"date","1985-04-12"],
+            ["x-time-example",{},"time","12:30:00"],
+            ["anniversary",{},"date-time","2013-02-14T12:30:00"],
+            ["bday",{},"date-and-or-time","--02-03"],
+            ["rev",{},"timestamp","2013-02-14T12:30:00Z"],
+            ["x-non-smoking",{},"boolean",true],
+            ["x-karma-points",{},"integer",42],
+            ["x-grade",{},"float",1.3],
+            ["tz",{},"utc-offset","-05:00"],
+            ["lang",{"pref":"1"},"language-tag","fr"],
+            ["x-unknown-prop",{},"unknown","some;raw\\,data"]
+        ]]"#;
+
+        let jcard: JCard = serde_json::from_str(json).unwrap();
+        let reserialized = serde_json::to_string(&jcard).unwrap();
+        let reparsed: JCard = serde_json::from_str(&reserialized).unwrap();
+        assert_eq!(jcard, reparsed);
+
+        let bday_props = jcard.get_all("bday");
+        assert_eq!(bday_props[0].value_type, "date");
+        assert_eq!(bday_props[1].value_type, "date-and-or-time");
+
+        let tz = jcard
+            .get("tz")
+            .unwrap();
+        assert_eq!(tz.value_type, "utc-offset");
+        assert_eq!(tz.value, PropertyValue::UtcOffset("-05:00".to_string()));
+
+        let unknown = jcard
+            .get("x-unknown-prop")
+            .unwrap();
+        assert_eq!(unknown.value_type, "unknown");
+        assert_eq!(
+            unknown.value,
+            PropertyValue::Unknown("some;raw\\,data".to_string()),
+        );
+    }
+
+    #[test]
+    fn structured_value_with_nested_arrays() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["adr",{},"text",
+                ["","",["123 Main St","Suite 100"],"Any Town","CA","91921","U.S.A."]
+            ]
+        ]]"#;
+
+        let jcard: JCard = serde_json::from_str(json).unwrap();
+        let adr = jcard
+            .get("adr")
+            .unwrap();
+        assert_eq!(
+            adr.value,
+            PropertyValue::Structured(vec![
+                StructuredComponent::Text(String::new()),
+                StructuredComponent::Text(String::new()),
+                StructuredComponent::Multi(vec![
+                    "123 Main St".to_string(),
+                    "Suite 100".to_string(),
+                ]),
+                StructuredComponent::Text("Any Town".to_string()),
+                StructuredComponent::Text("CA".to_string()),
+                StructuredComponent::Text("91921".to_string()),
+                StructuredComponent::Text("U.S.A.".to_string()),
+            ]),
+        );
+
+        let json_out = serde_json::to_string(&jcard).unwrap();
+        let reparsed: JCard = serde_json::from_str(&json_out).unwrap();
+        assert_eq!(jcard, reparsed);
+    }
+
+    #[test]
+    fn group_parameter() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["fn",{"group":"contact"},"text","Mr. John Q. Public, Esq."]
+        ]]"#;
+
+        let jcard: JCard = serde_json::from_str(json).unwrap();
+        let fn_prop = jcard
+            .get("fn")
+            .unwrap();
+        assert_eq!(
+            fn_prop
+                .parameters
+                .get("group"),
+            Some(&ParamValue::Single("contact".to_string())),
+        );
+
+        let json_out = serde_json::to_string(&jcard).unwrap();
+        let reparsed: JCard = serde_json::from_str(&json_out).unwrap();
+        assert_eq!(jcard, reparsed);
+    }
+
+    #[test]
+    fn extension_type_preserved() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["x-custom",{},"x-mytype","custom-value"]
+        ]]"#;
+
+        let jcard: JCard = serde_json::from_str(json).unwrap();
+        let custom = jcard
+            .get("x-custom")
+            .unwrap();
+        assert_eq!(custom.value_type, "x-mytype");
+
+        let json_out = serde_json::to_string(&jcard).unwrap();
+        let reparsed: serde_json::Value = serde_json::from_str(&json_out).unwrap();
+        assert_eq!(reparsed[1][1][2], "x-mytype");
     }
 }
