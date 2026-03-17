@@ -48,7 +48,7 @@ use std::fmt;
 use std::str::FromStr;
 
 pub use error::Error;
-pub use property::{ParamValue, Property, PropertyValue, StructuredComponent};
+pub use property::{EmptyParamValue, ParamValue, Property, PropertyValue, StructuredComponent};
 
 /// Warning emitted during lenient jCard parsing.
 ///
@@ -151,7 +151,25 @@ impl JCard {
             .collect()
     }
 
-    /// Parses a jCard from JSON with lenient error handling.
+    /// Parses a jCard from a [`serde_json::Value`] with lenient error handling.
+    ///
+    /// Returns [`Parsed<JCard>`] containing the best-effort parse result
+    /// and any [`ParseWarning`] entries for malformed properties.
+    /// Returns [`Error`] only for structural failures (missing `"vcard"`
+    /// tag, wrong element count, etc.).
+    ///
+    /// Use this when you already have a parsed JSON value (e.g., extracted
+    /// from a parent document). For raw JSON strings, use [`from_json`](Self::from_json).
+    pub fn from_value(value: &serde_json::Value) -> Result<Parsed<JCard>, Error> {
+        let mut warnings = Vec::new();
+        let jcard = deserialize::parse_jcard_value(value, &mut warnings)?;
+        Ok(Parsed {
+            value: jcard,
+            warnings,
+        })
+    }
+
+    /// Parses a jCard from a JSON string with lenient error handling.
     ///
     /// Returns [`Parsed<JCard>`] containing the best-effort parse result
     /// and any [`ParseWarning`] entries for malformed properties.
@@ -160,12 +178,7 @@ impl JCard {
     pub fn from_json(json: &str) -> Result<Parsed<JCard>, Error> {
         let value: serde_json::Value =
             serde_json::from_str(json).map_err(|e| Error::InvalidJson(Box::new(e)))?;
-        let mut warnings = Vec::new();
-        let jcard = deserialize::parse_jcard_value(&value, &mut warnings)?;
-        Ok(Parsed {
-            value: jcard,
-            warnings,
-        })
+        Self::from_value(&value)
     }
 }
 
@@ -253,10 +266,19 @@ impl JCardBuilder {
     }
 
     /// Adds a `TEL` property with a URI value and `TYPE` parameters.
-    pub fn tel_with_type(self, uri: &str, types: Vec<String>) -> Self {
+    pub fn tel_with_type(self, uri: &str, types: &[&str]) -> Self {
+        let param = if types.len() == 1 {
+            ParamValue::Single(types[0].to_string())
+        } else {
+            ParamValue::Multiple(
+                types
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            )
+        };
         self.property(
-            Property::new("tel", PropertyValue::Uri(uri.to_string()))
-                .with_param("type", ParamValue::from(types)),
+            Property::new("tel", PropertyValue::Uri(uri.to_string())).with_param("type", param),
         )
     }
 
@@ -467,10 +489,7 @@ mod tests {
     #[test]
     fn tel_with_type_params() {
         let jcard = JCard::builder()
-            .tel_with_type(
-                "tel:+15555550100",
-                vec!["work".to_string(), "voice".to_string()],
-            )
+            .tel_with_type("tel:+15555550100", &["work", "voice"])
             .build();
 
         let tel = jcard
@@ -668,13 +687,16 @@ mod tests {
     #[test]
     fn multi_valued_via_builder() {
         let jcard = JCard::builder()
-            .property(Property::multi(
-                "categories",
-                vec![
-                    PropertyValue::Text("computers".to_string()),
-                    PropertyValue::Text("cameras".to_string()),
-                ],
-            ))
+            .property(
+                Property::multi(
+                    "categories",
+                    vec![
+                        PropertyValue::Text("computers".to_string()),
+                        PropertyValue::Text("cameras".to_string()),
+                    ],
+                )
+                .unwrap(),
+            )
             .build();
 
         let cat = jcard
@@ -822,6 +844,49 @@ mod tests {
             .any(|w| w
                 .message
                 .contains("version")));
+    }
+
+    #[test]
+    fn property_name_lowercased() {
+        let prop = Property::new("FN", PropertyValue::Text("Test".to_string()));
+        assert_eq!(prop.name, "fn");
+
+        let prop =
+            Property::multi("CATEGORIES", vec![PropertyValue::Text("a".to_string())]).unwrap();
+        assert_eq!(prop.name, "categories");
+    }
+
+    #[test]
+    fn from_value_matches_from_json() {
+        let json = r#"["vcard",[["version",{},"text","4.0"],["fn",{},"text","Test"]]]"#;
+        let from_json = JCard::from_json(json).unwrap();
+
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let from_value = JCard::from_value(&value).unwrap();
+
+        assert_eq!(from_json.value, from_value.value);
+        assert_eq!(
+            from_json
+                .warnings
+                .len(),
+            from_value
+                .warnings
+                .len()
+        );
+    }
+
+    #[test]
+    fn deserialize_returns_default_on_structural_error() {
+        let bad_tag: JCard = serde_json::from_str(r#"["vcalendar",[]]"#).unwrap();
+        assert_eq!(bad_tag, JCard::default());
+
+        let not_array: JCard = serde_json::from_str(r#""just a string""#).unwrap();
+        assert_eq!(not_array, JCard::default());
+    }
+
+    #[test]
+    fn multi_returns_none_on_empty() {
+        assert!(Property::multi("categories", vec![]).is_none());
     }
 
     #[test]

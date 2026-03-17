@@ -42,13 +42,39 @@ This pattern originates from the EIDO crate's handling of PIDF-LO and
 ADR XML documents, where the same parse-and-warn approach proved
 essential for production NG9-1-1 deployments.
 
-### The serde Deserialize impl stays
+### The serde Deserialize impl is lenient
 
 The serde `Deserialize` impl calls the same internal lenient parser but
-discards the warnings. Callers who use `serde_json::from_str::<JCard>()`
-get the same best-effort parsing behavior — malformed properties are
-handled the same way — but without access to the warning details. This
-keeps the simple API path working for non-NENA consumers.
+discards the warnings. Prior to 0.3.0 it also propagated structural errors
+(`Err`) to the serde caller — which meant a malformed jCard embedded in a
+parent struct (e.g., EIDO's `agencyJcard: Option<JCard>`) would poison the
+entire parent deserialization.
+
+Starting with 0.3.0, when `parse_jcard_value()` returns a structural error,
+`Deserialize` returns `JCard::default()` (a minimal jCard with only the
+mandatory `version` property) instead of `Err`. The rationale is the same
+as for data-level warnings: a bad contact card must not prevent a calltaker
+from seeing the emergency incident data. The structural error is silently
+absorbed — callers who need to distinguish "empty because absent" from
+"empty because malformed" should use `from_json()` or `from_value()` where
+the `Error` is explicit.
+
+### from_value() avoids roundtripping
+
+`from_json()` accepts `&str`, parses it into a `serde_json::Value`, then
+runs the lenient parser. When a caller already holds a `serde_json::Value`
+— typically extracted from a parent JSON document — they would have to
+roundtrip through `serde_json::to_string()` + `from_json()` just to get
+warning collection. That's an unnecessary allocation and reparse.
+
+`from_value(&serde_json::Value)` exposes the internal parser directly.
+`from_json()` becomes a thin wrapper that handles the JSON string → Value
+step and maps `serde_json::Error` into `Error::InvalidJson`.
+
+The primary consumer is the EIDO crate: it deserializes a large JSON
+document, extracts the raw jCard `Value` from the parent, and calls
+`JCard::from_value()` to merge jCard warnings into the EIDO-level
+`ParseWarning` list with proper field path prefixes.
 
 ## Why an owned error type instead of exposing serde_json::Error
 
@@ -70,10 +96,6 @@ downstream users. Callers still get `.to_string()` and `.source()` for
 the original error — they just can't downcast to `serde_json::Error`,
 which they shouldn't need to do.
 
-This is stricter than what the EIDO crate currently does (EIDO exposes
-`serde_json::Error` directly in `from_json()`), and an EIDO change
-request has been filed to adopt the same pattern.
-
 ## Why value_type is stored separately on Property
 
 RFC 7095 defines a set of type identifiers (text, uri, date, date-time,
@@ -91,3 +113,58 @@ Storing `value_type: String` on `Property` separately means serialization
 uses the stored identifier, not the enum-derived one. The enum still
 provides typed access to the value; the stored string ensures the wire
 format is preserved.
+
+## Empty parameter value lists and the param_values! macro
+
+`ParamValue::Multiple(vec![])` is representable in Rust but semantically
+invalid per RFC 7095 — it serializes to `"type": []`, which no consumer
+should accept. The question is where to catch this.
+
+Three approaches were considered:
+
+**Passthrough** — `From<Vec<String>>` wraps whatever it gets. Simplest,
+but the library silently produces non-conformant output. A caller who
+accidentally passes an empty vec gets no signal; the bug surfaces far
+downstream when a consumer rejects the jCard.
+
+**TryFrom everywhere** — honest about fallibility, but removes the
+ergonomic `.into()` path. Every call site becomes `.try_into()?`. Also,
+`From` and `TryFrom` can't coexist for the same type pair due to the
+blanket impl conflict.
+
+**Compile-time macro + runtime TryFrom** — a `param_values!` macro
+validates at compile time for literal usage, while `TryFrom<Vec<String>>`
+catches empty vecs at runtime for programmatic callers.
+
+```rust
+param_values!["work", "voice"]  // → ParamValue::Multiple(vec![...])
+param_values!["work"]           // → ParamValue::Single("work".into())
+param_values![]                 // → compile_error!
+```
+
+The macro approach splits the problem along realistic lines. The static
+builder path — where a developer writes `param_values!["work", "voice"]`
+— gets compile-time rejection of empty lists and automatic `to_string()`
+conversion. The single-element arm produces `Single` (the canonical form
+per RFC 7095) rather than `Multiple(vec!["work"])`, avoiding a
+non-canonical representation without any implicit runtime decision.
+
+The dynamic path uses `TryFrom<Vec<String>>` which returns
+`Err(EmptyParamValue)` on empty input. Callers building parameter lists
+from runtime data get explicit error handling rather than silent
+non-conformant output.
+
+## Why property names are lowercased on construction
+
+RFC 7095 §3.3 requires property names to be lowercase in the JSON
+representation. Rather than validating at serialization time — which
+would either silently produce non-conformant output or surprise the
+caller with a runtime error far from where the property was created —
+all constructors (`Property::new`, `Property::multi`, and the internal
+`Property::from_raw`) normalize the name with `to_ascii_lowercase()`.
+
+This means `Property::new("FN", ...)` produces a property with name
+`"fn"`, matching what the RFC mandates on the wire. The normalization
+is eager and visible: callers who inspect `property.name` immediately
+see the lowercased form, so there are no surprises at serialization
+time.

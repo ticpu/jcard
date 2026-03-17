@@ -1,6 +1,6 @@
 [package]
 name = "jcard"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 description = "RFC 7095 jCard (JSON representation of vCard) types with serde support"

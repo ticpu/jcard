@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use serde::de::{self, Deserialize, Deserializer};
+use serde::de::{Deserialize, Deserializer};
 
 use crate::error::Error;
 use crate::property::{ParamValue, Property, PropertyValue};
@@ -222,6 +222,9 @@ impl<'de> Deserialize<'de> for JCard {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;
         let mut warnings = Vec::new();
-        parse_jcard_value(&value, &mut warnings).map_err(de::Error::custom)
+        match parse_jcard_value(&value, &mut warnings) {
+            Ok(jcard) => Ok(jcard),
+            Err(_) => Ok(JCard::default()),
+        }
     }
 }

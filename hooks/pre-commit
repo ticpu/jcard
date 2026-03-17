@@ -3,6 +3,25 @@
 
 set -e
 
+echo "Checking for assert! outside tests..."
+found_assert=0
+for file in src/*.rs; do
+    awk '
+        /^#\[cfg\(test\)\]/ { in_test = 1 }
+        /^\/\/.*assert/ { next }
+        !in_test && /[^a-z_]assert(_eq|_ne)?!|^assert(_eq|_ne)?!/ {
+            printf "%s:%d: %s\n", FILENAME, NR, $0
+            found = 1
+        }
+        END { exit found ? 1 : 0 }
+    ' "$file" && continue
+    found_assert=1
+done
+if [ "$found_assert" -eq 1 ]; then
+    echo "Found assert! macros outside test code. Use Result/Option instead."
+    exit 1
+fi
+
 echo "Running cargo fmt check..."
 if ! cargo fmt --all -- --check; then
     echo "Code is not formatted. Run 'cargo fmt --all' to fix."

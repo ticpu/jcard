@@ -3,6 +3,30 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+/// Creates a [`ParamValue`] with compile-time validation.
+///
+/// A single value produces [`ParamValue::Single`], multiple values produce
+/// [`ParamValue::Multiple`]. An empty invocation is a compile error.
+///
+/// ```
+/// use jcard::param_values;
+///
+/// let single = param_values!["work"];          // ParamValue::Single("work")
+/// let multi = param_values!["work", "voice"];  // ParamValue::Multiple(vec![...])
+/// ```
+#[macro_export]
+macro_rules! param_values {
+    () => {
+        compile_error!("parameter value list must not be empty")
+    };
+    ($single:expr) => {
+        $crate::ParamValue::from($single.to_string())
+    };
+    ($($val:expr),+ $(,)?) => {
+        $crate::ParamValue::Multiple(vec![$($val.to_string()),+])
+    };
+}
+
 /// A parameter value attached to a jCard property.
 ///
 /// Per RFC 7095 §3.4, parameter values are either a single string or an
@@ -27,16 +51,33 @@ impl From<String> for ParamValue {
     }
 }
 
-impl From<Vec<String>> for ParamValue {
-    fn from(v: Vec<String>) -> Self {
+/// Error returned when converting an empty `Vec<String>` into a [`ParamValue`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmptyParamValue;
+
+impl fmt::Display for EmptyParamValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("parameter value list must not be empty")
+    }
+}
+
+impl std::error::Error for EmptyParamValue {}
+
+impl TryFrom<Vec<String>> for ParamValue {
+    type Error = EmptyParamValue;
+
+    fn try_from(v: Vec<String>) -> Result<Self, Self::Error> {
+        if v.is_empty() {
+            return Err(EmptyParamValue);
+        }
         if v.len() == 1 {
-            Self::Single(
+            Ok(Self::Single(
                 v.into_iter()
                     .next()
                     .unwrap(),
-            )
+            ))
         } else {
-            Self::Multiple(v)
+            Ok(Self::Multiple(v))
         }
     }
 }
@@ -298,7 +339,9 @@ impl Property {
     /// The type identifier is derived from the [`PropertyValue`] variant.
     pub fn new(name: impl Into<String>, value: PropertyValue) -> Self {
         Self {
-            name: name.into(),
+            name: name
+                .into()
+                .to_ascii_lowercase(),
             parameters: BTreeMap::new(),
             value_type: value
                 .default_type()
@@ -309,17 +352,21 @@ impl Property {
 
     /// Creates a multi-valued property (RFC 7095 §3.3).
     ///
-    /// Panics if `values` is empty.
-    pub fn multi(name: impl Into<String>, values: Vec<PropertyValue>) -> Self {
-        assert!(!values.is_empty(), "property must have at least one value");
-        Self {
-            name: name.into(),
+    /// Returns `None` if `values` is empty, since a property must have at
+    /// least one value per the RFC 7095 tuple format.
+    pub fn multi(name: impl Into<String>, values: Vec<PropertyValue>) -> Option<Self> {
+        let first_type = values
+            .first()?
+            .default_type()
+            .to_string();
+        Some(Self {
+            name: name
+                .into()
+                .to_ascii_lowercase(),
             parameters: BTreeMap::new(),
-            value_type: values[0]
-                .default_type()
-                .to_string(),
+            value_type: first_type,
             values,
-        }
+        })
     }
 
     pub(crate) fn from_raw(
@@ -329,7 +376,7 @@ impl Property {
         values: Vec<PropertyValue>,
     ) -> Self {
         Self {
-            name,
+            name: name.to_ascii_lowercase(),
             parameters,
             value_type,
             values,
