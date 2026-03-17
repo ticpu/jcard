@@ -1,8 +1,10 @@
 # jcard
 
 [![CI](https://github.com/ticpu/jcard/actions/workflows/ci.yml/badge.svg)](https://github.com/ticpu/jcard/actions/workflows/ci.yml)
-[![docs.rs](https://docs.rs/jcard/badge.svg)](https://docs.rs/jcard)
 [![crates.io](https://img.shields.io/crates/v/jcard.svg)](https://crates.io/crates/jcard)
+[![docs.rs](https://img.shields.io/docsrs/jcard)](https://docs.rs/jcard)
+[![MSRV](https://img.shields.io/crates/msrv/jcard)](https://crates.io/crates/jcard)
+[![license](https://img.shields.io/crates/l/jcard)](https://github.com/ticpu/jcard#license)
 
 [RFC 7095](https://www.rfc-editor.org/rfc/rfc7095) jCard (JSON representation
 of vCard) types with serde support.

@@ -2,6 +2,7 @@
 name = "jcard"
 version = "0.3.0"
 edition = "2021"
+rust-version = "1.82"
 authors = ["Jérôme Poulin <jeromepoulin@gmail.com>"]
 description = "RFC 7095 jCard (JSON representation of vCard) types with serde support"
 license = "MIT OR Apache-2.0"
@@ -9,6 +10,7 @@ repository = "https://github.com/ticpu/jcard"
 documentation = "https://docs.rs/jcard"
 keywords = ["jcard", "vcard", "rfc7095", "json", "serde"]
 categories = ["encoding", "parser-implementations"]
+exclude = ["hooks/", ".gitleaks.toml", "CLAUDE.md"]
 
 [features]
 lenient-deserialize = []

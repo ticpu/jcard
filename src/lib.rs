@@ -269,7 +269,13 @@ impl JCardBuilder {
     }
 
     /// Adds a `TEL` property with a URI value and `TYPE` parameters.
+    ///
+    /// If `types` is empty, the property is added without a `TYPE` parameter.
     pub fn tel_with_type(self, uri: &str, types: &[&str]) -> Self {
+        let prop = Property::new("tel", PropertyValue::Uri(uri.to_string()));
+        if types.is_empty() {
+            return self.property(prop);
+        }
         let param = if types.len() == 1 {
             ParamValue::Single(types[0].to_string())
         } else {
@@ -280,9 +286,7 @@ impl JCardBuilder {
                     .collect(),
             )
         };
-        self.property(
-            Property::new("tel", PropertyValue::Uri(uri.to_string())).with_param("type", param),
-        )
+        self.property(prop.with_param("type", param))
     }
 
     /// Adds an `ORG` property.
@@ -896,6 +900,20 @@ mod tests {
 
         let result = serde_json::from_str::<JCard>(r#""just a string""#);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn tel_with_empty_types_omits_param() {
+        let jcard = JCard::builder()
+            .tel_with_type("tel:+15555550100", &[])
+            .build();
+
+        let tel = jcard
+            .get("tel")
+            .unwrap();
+        assert!(tel
+            .parameters
+            .is_empty());
     }
 
     #[test]
