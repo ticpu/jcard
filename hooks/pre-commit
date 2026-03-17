@@ -41,10 +41,17 @@ if ! doc_output=$(RUSTDOCFLAGS="-D missing_docs -D rustdoc::broken_intra_doc_lin
     exit 1
 fi
 
-echo "Running tests..."
+echo "Running tests (default features)..."
 if ! test_output=$(cargo test 2>&1); then
     echo "$test_output" | tail
-    echo "Tests failed. Fix them before committing."
+    echo "Tests failed (default features). Fix them before committing."
+    exit 1
+fi
+
+echo "Running tests (lenient-deserialize)..."
+if ! test_output=$(cargo test --features lenient-deserialize 2>&1); then
+    echo "$test_output" | tail
+    echo "Tests failed (lenient-deserialize). Fix them before committing."
     exit 1
 fi
 

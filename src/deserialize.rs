@@ -222,9 +222,16 @@ impl<'de> Deserialize<'de> for JCard {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;
         let mut warnings = Vec::new();
-        match parse_jcard_value(&value, &mut warnings) {
-            Ok(jcard) => Ok(jcard),
-            Err(_) => Ok(JCard::default()),
+        #[cfg(feature = "lenient-deserialize")]
+        {
+            match parse_jcard_value(&value, &mut warnings) {
+                Ok(jcard) => Ok(jcard),
+                Err(_) => Ok(JCard::default()),
+            }
+        }
+        #[cfg(not(feature = "lenient-deserialize"))]
+        {
+            parse_jcard_value(&value, &mut warnings).map_err(serde::de::Error::custom)
         }
     }
 }

@@ -56,6 +56,27 @@ for w in &parsed.warnings {
 }
 ```
 
+## Deserialization behavior
+
+The serde `Deserialize` impl returns `Err` on structurally invalid jCard
+input (wrong tag, not an array, etc.) by default. This is the expected
+behavior for standalone use — the caller sees the error and decides what
+to do.
+
+When jCard is embedded as a field in a parent struct (e.g., EIDO's
+`agencyJcard: Option<JCard>`), a deserialization error on the jCard
+poisons the entire parent. Enable the `lenient-deserialize` feature to
+return an empty `JCard` (with only the mandatory `version` property)
+instead of `Err`:
+
+```toml
+[dependencies]
+jcard = { version = "0.3", features = ["lenient-deserialize"] }
+```
+
+Both paths discard warnings. Use `from_json()` or `from_value()` when
+you need structured warning collection alongside the best-effort result.
+
 ### From an existing serde_json::Value
 
 ```rust

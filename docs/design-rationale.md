@@ -42,22 +42,38 @@ This pattern originates from the EIDO crate's handling of PIDF-LO and
 ADR XML documents, where the same parse-and-warn approach proved
 essential for production NG9-1-1 deployments.
 
-### The serde Deserialize impl is lenient
+### The serde Deserialize impl and the lenient-deserialize feature
 
-The serde `Deserialize` impl calls the same internal lenient parser but
-discards the warnings. Prior to 0.3.0 it also propagated structural errors
-(`Err`) to the serde caller — which meant a malformed jCard embedded in a
-parent struct (e.g., EIDO's `agencyJcard: Option<JCard>`) would poison the
-entire parent deserialization.
+The serde `Deserialize` trait has a fixed signature: `Result<Self, D::Error>`.
+There is no side channel for warnings. This creates a tension between two
+legitimate use cases:
 
-Starting with 0.3.0, when `parse_jcard_value()` returns a structural error,
-`Deserialize` returns `JCard::default()` (a minimal jCard with only the
-mandatory `version` property) instead of `Err`. The rationale is the same
-as for data-level warnings: a bad contact card must not prevent a calltaker
-from seeing the emergency incident data. The structural error is silently
-absorbed — callers who need to distinguish "empty because absent" from
-"empty because malformed" should use `from_json()` or `from_value()` where
-the `Error` is explicit.
+**Standalone users** call `serde_json::from_str::<JCard>(s)` and expect
+`Err` when the input is structurally invalid. Returning `Ok(default)`
+silently is an implicit policy decision — the library hides the failure
+and the caller has no signal that anything went wrong.
+
+**Embedding users** (EIDO) have `Option<JCard>` as a field in a parent
+struct. When `Deserialize` returns `Err`, serde propagates it and the
+entire parent deserialization fails. A malformed contact card should not
+prevent a calltaker from seeing the emergency incident data.
+
+Neither behavior is universally correct, and unconditional leniency
+violates the project's "transparent, not clever" principle. The solution
+is a feature gate:
+
+- **Default (no feature):** `Deserialize` returns `Err` on structural
+  failure. Honest — the caller sees the error and decides what to do.
+- **`lenient-deserialize`:** `Deserialize` returns `JCard::default()`
+  (a minimal jCard with only the mandatory `version` property) on
+  structural failure. The error is silently absorbed — callers who need
+  diagnostics should use `from_json()` or `from_value()`.
+
+The EIDO crate enables `lenient-deserialize` so that jCard fields
+degrade gracefully. It then calls `JCard::from_value()` on the raw JSON
+value in a second pass to collect warnings with proper field path
+prefixes. Standalone users get strict deserialization by default and are
+never surprised by silent empty jCards.
 
 ### from_value() avoids roundtripping
 

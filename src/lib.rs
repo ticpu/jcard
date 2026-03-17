@@ -11,7 +11,10 @@
 //! available data while discrepancy reports capture what went wrong.
 //!
 //! The serde [`Deserialize`](serde::Deserialize) impl is also available
-//! for simple use cases where warnings are not needed.
+//! for simple use cases where warnings are not needed. By default it
+//! returns `Err` on structural failures; enable the `lenient-deserialize`
+//! feature to return an empty `JCard` instead (useful when embedding
+//! jCard in a parent struct that must not fail on malformed contact data).
 //!
 //! # Value Types
 //!
@@ -876,12 +879,23 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "lenient-deserialize")]
     fn deserialize_returns_default_on_structural_error() {
         let bad_tag: JCard = serde_json::from_str(r#"["vcalendar",[]]"#).unwrap();
         assert_eq!(bad_tag, JCard::default());
 
         let not_array: JCard = serde_json::from_str(r#""just a string""#).unwrap();
         assert_eq!(not_array, JCard::default());
+    }
+
+    #[test]
+    #[cfg(not(feature = "lenient-deserialize"))]
+    fn deserialize_returns_err_on_structural_error() {
+        let result = serde_json::from_str::<JCard>(r#"["vcalendar",[]]"#);
+        assert!(result.is_err());
+
+        let result = serde_json::from_str::<JCard>(r#""just a string""#);
+        assert!(result.is_err());
     }
 
     #[test]

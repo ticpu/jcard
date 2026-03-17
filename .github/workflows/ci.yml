@@ -19,4 +19,5 @@ jobs:
     - run: cargo fmt --all -- --check
     - run: cargo clippy --all-targets -- -D warnings
     - run: cargo test
+    - run: cargo test --features lenient-deserialize
     - run: RUSTDOCFLAGS="-D missing_docs -D rustdoc::broken_intra_doc_links" cargo doc --no-deps
