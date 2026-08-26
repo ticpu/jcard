@@ -292,6 +292,43 @@ impl PropertyValue {
             },
         }
     }
+
+    /// Builds a value from an xCard value element, whose local name is the
+    /// type identifier and whose text content is the value.
+    ///
+    /// `None` when the text does not match the primitive type the element
+    /// declares; the caller preserves it as [`Self::Unknown`] and warns.
+    #[cfg(feature = "xcard")]
+    pub(crate) fn from_typed_text(value_type: &str, text: &str) -> Option<Self> {
+        let owned = || text.to_string();
+        match value_type {
+            "text" => Some(Self::Text(owned())),
+            "uri" => Some(Self::Uri(owned())),
+            "date" => Some(Self::Date(owned())),
+            "time" => Some(Self::Time(owned())),
+            "date-time" => Some(Self::DateTime(owned())),
+            "date-and-or-time" => Some(Self::DateAndOrTime(owned())),
+            "timestamp" => Some(Self::Timestamp(owned())),
+            "boolean" => text
+                .parse()
+                .ok()
+                .map(Self::Boolean),
+            "integer" => text
+                .parse()
+                .ok()
+                .map(Self::Integer),
+            "float" => text
+                .parse()
+                .ok()
+                .map(Self::Float),
+            "utc-offset" => Some(Self::UtcOffset(owned())),
+            "language-tag" => Some(Self::LanguageTag(owned())),
+            "unknown" => Some(Self::Unknown(owned())),
+            // An extension value type carries text this crate cannot classify;
+            // `Property::value_type` still reports what the sender declared.
+            _ => Some(Self::Text(owned())),
+        }
+    }
 }
 
 fn parse_structured(arr: &[serde_json::Value]) -> Vec<StructuredComponent> {

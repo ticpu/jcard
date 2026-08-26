@@ -11,6 +11,8 @@ use std::fmt;
 pub enum Error {
     /// The input is not valid JSON.
     InvalidJson(Box<dyn std::error::Error + Send + Sync>),
+    /// The input is not well-formed XML (xCard only).
+    InvalidXml(Box<dyn std::error::Error + Send + Sync>),
     /// Valid JSON but not a valid jCard structure.
     InvalidStructure(String),
 }
@@ -19,6 +21,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidJson(e) => write!(f, "invalid JSON: {e}"),
+            Self::InvalidXml(e) => write!(f, "invalid XML: {e}"),
             Self::InvalidStructure(msg) => write!(f, "invalid jCard structure: {msg}"),
         }
     }
@@ -27,7 +30,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::InvalidJson(e) => Some(&**e),
+            Self::InvalidJson(e) | Self::InvalidXml(e) => Some(&**e),
             Self::InvalidStructure(_) => None,
         }
     }

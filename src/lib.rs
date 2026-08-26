@@ -46,6 +46,8 @@ mod deserialize;
 pub mod error;
 pub mod property;
 mod serialize;
+#[cfg(feature = "xcard")]
+pub mod xcard;
 
 use std::fmt;
 use std::str::FromStr;
