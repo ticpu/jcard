@@ -55,6 +55,21 @@ use std::str::FromStr;
 pub use error::Error;
 pub use property::{EmptyParamValue, ParamValue, Property, PropertyValue, StructuredComponent};
 
+/// Whether the value survived the problem a [`ParseWarning`] reports.
+///
+/// Both are worth reporting upstream, but only one of them costs the reader
+/// data, so a consumer that acts on warnings needs to tell them apart without
+/// matching on the message text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarningKind {
+    /// The input was non-conformant and the value came through anyway, in a
+    /// form that round-trips.
+    Recovered,
+    /// The value is gone: a property, parameter, value or component was
+    /// dropped, or was never there.
+    Lost,
+}
+
 /// Warning emitted during lenient jCard parsing.
 ///
 /// When a property can't be fully parsed, the parser preserves what it can
@@ -68,6 +83,38 @@ pub struct ParseWarning {
     pub message: String,
     /// Unparsed source text, preserved for display.
     pub raw_value: Option<String>,
+    /// Whether the value survived (see [`WarningKind`]).
+    pub kind: WarningKind,
+}
+
+impl ParseWarning {
+    /// Warning whose value is gone.
+    pub fn lost(
+        path: impl Into<String>,
+        message: impl Into<String>,
+        raw_value: Option<String>,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            message: message.into(),
+            raw_value,
+            kind: WarningKind::Lost,
+        }
+    }
+
+    /// Warning whose value came through the non-conformance intact.
+    pub fn recovered(
+        path: impl Into<String>,
+        message: impl Into<String>,
+        raw_value: Option<String>,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            message: message.into(),
+            raw_value,
+            kind: WarningKind::Recovered,
+        }
+    }
 }
 
 impl fmt::Display for ParseWarning {

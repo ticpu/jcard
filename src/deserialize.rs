@@ -46,11 +46,11 @@ pub(crate) fn parse_jcard_value(
         .first()
         .is_none_or(|p| p.name != "version")
     {
-        warnings.push(ParseWarning {
-            path: "properties[0]".into(),
-            message: "expected 'version' as first property".into(),
-            raw_value: None,
-        });
+        warnings.push(ParseWarning::lost(
+            "properties[0]",
+            "expected 'version' as first property",
+            None,
+        ));
     }
 
     Ok(JCard { properties })
@@ -75,32 +75,32 @@ fn parse_single_property(
     let arr = match value.as_array() {
         Some(arr) => arr,
         None => {
-            warnings.push(ParseWarning {
-                path: format!("properties[{index}]"),
-                message: format!("property is not an array (got {})", json_type_name(value)),
-                raw_value: Some(value.to_string()),
-            });
+            warnings.push(ParseWarning::lost(
+                format!("properties[{index}]"),
+                format!("property is not an array (got {})", json_type_name(value)),
+                Some(value.to_string()),
+            ));
             return None;
         }
     };
 
     if arr.len() < 4 {
-        warnings.push(ParseWarning {
-            path: format!("properties[{index}]"),
-            message: format!("tuple has {} elements, need at least 4", arr.len()),
-            raw_value: Some(value.to_string()),
-        });
+        warnings.push(ParseWarning::lost(
+            format!("properties[{index}]"),
+            format!("tuple has {} elements, need at least 4", arr.len()),
+            Some(value.to_string()),
+        ));
         return None;
     }
 
     let name = match arr[0].as_str() {
         Some(s) => s.to_string(),
         None => {
-            warnings.push(ParseWarning {
-                path: format!("properties[{index}]"),
-                message: "name is not a string".into(),
-                raw_value: Some(arr[0].to_string()),
-            });
+            warnings.push(ParseWarning::lost(
+                format!("properties[{index}]"),
+                "name is not a string",
+                Some(arr[0].to_string()),
+            ));
             return None;
         }
     };
@@ -110,14 +110,15 @@ fn parse_single_property(
     let value_type = match arr[2].as_str() {
         Some(s) => s.to_string(),
         None => {
-            warnings.push(ParseWarning {
-                path: path.clone(),
-                message: format!(
+            // The declared type is gone, but the value it labels is not.
+            warnings.push(ParseWarning::lost(
+                path.clone(),
+                format!(
                     "type identifier is not a string (got {})",
                     json_type_name(&arr[2])
                 ),
-                raw_value: Some(arr[2].to_string()),
-            });
+                Some(arr[2].to_string()),
+            ));
             "unknown".to_string()
         }
     };
@@ -125,14 +126,14 @@ fn parse_single_property(
     let parameters = if let Some(map) = arr[1].as_object() {
         parse_parameters(map, &path, warnings)
     } else {
-        warnings.push(ParseWarning {
-            path: path.clone(),
-            message: format!(
+        warnings.push(ParseWarning::lost(
+            path.clone(),
+            format!(
                 "parameters is not an object (got {})",
                 json_type_name(&arr[1])
             ),
-            raw_value: Some(arr[1].to_string()),
-        });
+            Some(arr[1].to_string()),
+        ));
         BTreeMap::new()
     };
 
@@ -142,22 +143,23 @@ fn parse_single_property(
         .map(|(vi, v)| match PropertyValue::from_json(&value_type, v) {
             Some(pv) => pv,
             None => {
-                warnings.push(ParseWarning {
-                    path: format!("{path}.values[{vi}]"),
-                    message: format!("expected {value_type} value, got {}", json_type_name(v)),
-                    raw_value: Some(v.to_string()),
-                });
+                // The value keeps its source form as text.
+                warnings.push(ParseWarning::recovered(
+                    format!("{path}.values[{vi}]"),
+                    format!("expected {value_type} value, got {}", json_type_name(v)),
+                    Some(v.to_string()),
+                ));
                 fallback_text(v)
             }
         })
         .collect();
 
     if values.is_empty() {
-        warnings.push(ParseWarning {
+        warnings.push(ParseWarning::lost(
             path,
-            message: "no values in property tuple".into(),
-            raw_value: None,
-        });
+            "no values in property tuple",
+            None,
+        ));
         return None;
     }
 
@@ -184,14 +186,14 @@ fn parse_parameters(
                     ParamValue::Multiple(strings)
                 }
                 _ => {
-                    warnings.push(ParseWarning {
-                        path: format!("{path}.parameters.{k}"),
-                        message: format!(
+                    warnings.push(ParseWarning::lost(
+                        format!("{path}.parameters.{k}"),
+                        format!(
                             "parameter value is not a string or array (got {})",
                             json_type_name(v)
                         ),
-                        raw_value: Some(v.to_string()),
-                    });
+                        Some(v.to_string()),
+                    ));
                     return None;
                 }
             };

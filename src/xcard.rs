@@ -68,7 +68,7 @@ pub fn parse(xml: &str) -> Result<Parsed<Vec<JCard>>, Error> {
                 b"vcards" => ctx.read_vcards(&mut cards)?,
                 b"vcard" => {
                     let path = format!("vcard[{}]", cards.len());
-                    ctx.warn(&path, "no <vcards> wrapper element", None);
+                    ctx.recovered(&path, "no <vcards> wrapper element", None);
                     let card = ctx.read_vcard(cards.len())?;
                     cards.push(card);
                 }
@@ -136,13 +136,16 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    fn warn(&mut self, path: &str, message: &str, raw_value: Option<String>) {
+    /// Reports a value that did not survive the problem.
+    fn lost(&mut self, path: &str, message: &str, raw_value: Option<String>) {
         self.warnings
-            .push(ParseWarning {
-                path: path.to_owned(),
-                message: message.to_owned(),
-                raw_value,
-            });
+            .push(ParseWarning::lost(path, message, raw_value));
+    }
+
+    /// Reports non-conformant input the value came through intact.
+    fn recovered(&mut self, path: &str, message: &str, raw_value: Option<String>) {
+        self.warnings
+            .push(ParseWarning::recovered(path, message, raw_value));
     }
 
     /// Every loop below fully consumes each child it opens, so the first `End`
@@ -184,7 +187,7 @@ impl<'a> Ctx<'a> {
                         let path = format!("vcard[{index}] 'group'");
                         let group = self.attr_text(&e, b"name", &path);
                         if group.is_none() {
-                            self.warn(&path, "group element has no name attribute", None);
+                            self.lost(&path, "group element has no name attribute", None);
                         }
                         self.read_group(index, group.as_deref(), &mut properties)?;
                     } else {
@@ -210,7 +213,7 @@ impl<'a> Ctx<'a> {
                 Event::Start(e) => {
                     let name = element_name(&e);
                     if name == "group" {
-                        self.warn(
+                        self.lost(
                             &format!("vcard[{index}] 'group'"),
                             "nested group element discarded",
                             None,
@@ -276,7 +279,9 @@ impl<'a> Ctx<'a> {
                         None => match PropertyValue::from_typed_text(&child, &text) {
                             Some(value) => values.push((child, value)),
                             None => {
-                                self.warn(
+                                // The text is kept verbatim, and `value_type`
+                                // still reports what the sender declared.
+                                self.recovered(
                                     &path,
                                     &format!("value does not parse as declared type '{child}'"),
                                     Some(text.clone()),
@@ -296,7 +301,7 @@ impl<'a> Ctx<'a> {
                 .iter()
                 .all(Vec::is_empty)
             {
-                self.warn(&path, "structured property has no component element", None);
+                self.lost(&path, "structured property has no component element", None);
             }
             let value = PropertyValue::Structured(
                 slots
@@ -316,13 +321,15 @@ impl<'a> Ctx<'a> {
             let text = loose_text
                 .trim()
                 .to_owned();
-            let message = if text.is_empty() {
-                "property has no value element"
+            if text.is_empty() {
+                self.lost(&path, "property has no value element", None);
             } else {
-                "value text is not wrapped in a value element"
-            };
-            let raw = (!text.is_empty()).then(|| text.clone());
-            self.warn(&path, message, raw);
+                self.recovered(
+                    &path,
+                    "value text is not wrapped in a value element",
+                    Some(text.clone()),
+                );
+            }
             return Ok(Property::from_raw(
                 name.to_owned(),
                 parameters,
@@ -347,7 +354,8 @@ impl<'a> Ctx<'a> {
         }
 
         if values.len() > 1 && !MULTI_PROPERTIES.contains(&name) {
-            self.warn(&path, "property has more than one value element", None);
+            // Every value is kept; only the shape is non-conformant.
+            self.recovered(&path, "property has more than one value element", None);
         }
 
         let value_type = values[0]
@@ -376,14 +384,14 @@ impl<'a> Ctx<'a> {
                     let key = element_name(&e);
                     let values = self.read_param_values(path, &key)?;
                     let value = ParamValue::try_from(values).unwrap_or_else(|_| {
-                        self.warn(path, &format!("parameter '{key}' has no value"), None);
+                        self.lost(path, &format!("parameter '{key}' has no value"), None);
                         ParamValue::Single(String::new())
                     });
                     if out
                         .insert(key.clone(), value)
                         .is_some()
                     {
-                        self.warn(
+                        self.lost(
                             path,
                             &format!("parameter '{key}' given more than once; last one kept"),
                             None,
@@ -419,7 +427,7 @@ impl<'a> Ctx<'a> {
 
         let loose_text = loose_text.trim();
         if values.is_empty() && !loose_text.is_empty() {
-            self.warn(
+            self.recovered(
                 path,
                 &format!("parameter '{key}' value is not wrapped in a value element"),
                 Some(loose_text.to_owned()),
@@ -441,7 +449,7 @@ impl<'a> Ctx<'a> {
             match event {
                 Event::Start(e) => {
                     let child = element_name(&e);
-                    self.warn(
+                    self.lost(
                         path,
                         &format!("child element <{child}> discarded from a value element"),
                         None,
@@ -479,7 +487,7 @@ impl<'a> Ctx<'a> {
                     Some(resolved) => resolved,
                     None => {
                         let literal = format!("&{body};");
-                        self.warn(path, "unresolvable entity reference", Some(literal.clone()));
+                        self.lost(path, "unresolvable entity reference", Some(literal.clone()));
                         literal
                     }
                 })
@@ -504,7 +512,7 @@ impl<'a> Ctx<'a> {
                 Ok(value) => Some(value.into_owned()),
                 Err(_) => {
                     let raw = String::from_utf8_lossy(&attr.value).into_owned();
-                    self.warn(
+                    self.lost(
                         path,
                         "attribute holds an unresolvable reference",
                         Some(raw.clone()),
@@ -828,15 +836,19 @@ mod tests {
         )
         .expect("parses");
 
+        // The card came through whole, so the omission must not read as data
+        // the reader lost.
         assert_eq!(
             parsed
                 .warnings
                 .iter()
-                .map(|w| w
-                    .message
-                    .as_str())
+                .map(|w| (
+                    w.kind,
+                    w.message
+                        .as_str()
+                ))
                 .collect::<Vec<_>>(),
-            ["no <vcards> wrapper element"]
+            [(crate::WarningKind::Recovered, "no <vcards> wrapper element")]
         );
         let card = &parsed.value[0];
         assert_eq!(
