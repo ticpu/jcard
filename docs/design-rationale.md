@@ -197,6 +197,11 @@ The version property is synthesized rather than read: xCard carries the
 version in its namespace and has no such property, so warning about its
 absence would report every conformant card as defective.
 
+Which arrangement of `<vcard>` is conformant is the caller's to state,
+never this crate's to assume. Assuming one makes the reader warn on every
+conformant document of the other kind, which is how a consumer learns to
+ignore the warning stream.
+
 Which properties are structured is a table keyed on property name. A
 repeated child element means a different thing per property — one
 component of a structured value repeated, a list that is itself a single

@@ -44,18 +44,46 @@ const LIST_PROPERTIES: &[&str] = &["org"];
 /// property (RFC 7095 §3.3).
 const MULTI_PROPERTIES: &[&str] = &["categories", "nickname"];
 
-/// Reads an xCard document into one [`JCard`] per `<vcard>` element.
+/// Reads a standalone xCard document (RFC 6351 §5) into one [`JCard`] per
+/// `<vcard>` element.
+///
+/// `<vcards>` is the document root and is required; a bare `<vcard>` is read
+/// anyway and reported. For markup embedded in a host element that carries
+/// `<vcard>` children directly, use [`parse_embedded`] — there the wrapper is
+/// the deviation, not the norm.
 ///
 /// `Err` is reserved for input that yields no card at all — ill-formed XML, or
 /// markup containing no `<vcard>`. Everything else is best-effort: malformed
-/// properties, values that do not match their declared type, and a missing
-/// `<vcards>` wrapper all come back as [`ParseWarning`] entries alongside the
-/// cards.
+/// properties and values that do not match their declared type come back as
+/// [`ParseWarning`] entries alongside the cards.
 ///
 /// The input may be a fragment lifted out of a larger document: elements are
 /// matched on their local name, so namespace prefixes bound on an ancestor
 /// that is not present do not prevent parsing.
 pub fn parse(xml: &str) -> Result<Parsed<Vec<JCard>>, Error> {
+    read(xml, Shape::Document)
+}
+
+/// Reads the content of a host element that carries a sequence of `<vcard>`
+/// children, as RFC 7852 `<SubscriberData>` and `<DataProviderContact>` do.
+///
+/// The bare sequence is the conformant shape here, so it is not reported. A
+/// `<vcards>` wrapper is read anyway and reported, being the root of a
+/// standalone document rather than anything the host element's content model
+/// admits.
+pub fn parse_embedded(xml: &str) -> Result<Parsed<Vec<JCard>>, Error> {
+    read(xml, Shape::EmbeddedSequence)
+}
+
+/// Which arrangement of `<vcard>` the caller's specification calls for, and so
+/// which one is the discrepancy.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shape {
+    Document,
+    EmbeddedSequence,
+}
+
+fn read(xml: &str, shape: Shape) -> Result<Parsed<Vec<JCard>>, Error> {
     let mut ctx = Ctx::new(xml);
     let mut cards = Vec::new();
 
@@ -65,10 +93,24 @@ pub fn parse(xml: &str) -> Result<Parsed<Vec<JCard>>, Error> {
                 .local_name()
                 .as_ref()
             {
-                "vcards" => ctx.read_vcards(&mut cards)?,
+                "vcards" => {
+                    if shape == Shape::EmbeddedSequence {
+                        ctx.recovered(
+                            &format!("vcard[{}]", cards.len()),
+                            "<vcards> wrapper element around embedded cards",
+                            None,
+                        );
+                    }
+                    ctx.read_vcards(&mut cards)?
+                }
                 "vcard" => {
-                    let path = format!("vcard[{}]", cards.len());
-                    ctx.recovered(&path, "no <vcards> wrapper element", None);
+                    if shape == Shape::Document {
+                        ctx.recovered(
+                            &format!("vcard[{}]", cards.len()),
+                            "no <vcards> wrapper element",
+                            None,
+                        );
+                    }
                     let card = ctx.read_vcard(cards.len())?;
                     cards.push(card);
                 }
@@ -913,6 +955,53 @@ mod tests {
             parsed.warnings[0].message,
             "value text is not wrapped in a value element"
         );
+    }
+
+    /// RFC 7852 gives `<SubscriberData>` and `<DataProviderContact>` a bare
+    /// `<vcard>` sequence, so which shape is the discrepancy is the caller's
+    /// to state.
+    #[test]
+    fn embedded_sequence_inverts_which_shape_is_reported() {
+        let bare = r#"<vcard><fn><text>Jane Doe</text></fn></vcard>"#;
+        let wrapped = r#"<vcards><vcard><fn><text>Jane Doe</text></fn></vcard></vcards>"#;
+
+        let parsed = parse_embedded(bare).expect("parses");
+        assert!(
+            parsed
+                .warnings
+                .is_empty(),
+            "{:?}",
+            parsed.warnings
+        );
+        assert_eq!(
+            parsed
+                .value
+                .len(),
+            1
+        );
+
+        let parsed = parse_embedded(wrapped).expect("parses");
+        assert_eq!(
+            parsed
+                .warnings
+                .iter()
+                .map(|w| (
+                    w.kind,
+                    w.message
+                        .as_str()
+                ))
+                .collect::<Vec<_>>(),
+            [(
+                crate::WarningKind::Recovered,
+                "<vcards> wrapper element around embedded cards"
+            )]
+        );
+
+        // The document entry point keeps the opposite polarity.
+        assert!(parse(wrapped)
+            .expect("parses")
+            .warnings
+            .is_empty());
     }
 
     #[test]
