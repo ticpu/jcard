@@ -61,12 +61,12 @@ pub fn parse(xml: &str) -> Result<Parsed<Vec<JCard>>, Error> {
 
     loop {
         match ctx.read_event()? {
-            Event::Start(e) => match local_name(
-                e.name()
-                    .as_ref(),
-            ) {
-                b"vcards" => ctx.read_vcards(&mut cards)?,
-                b"vcard" => {
+            Event::Start(e) => match e
+                .local_name()
+                .as_ref()
+            {
+                "vcards" => ctx.read_vcards(&mut cards)?,
+                "vcard" => {
                     let path = format!("vcard[{}]", cards.len());
                     ctx.recovered(&path, "no <vcards> wrapper element", None);
                     let card = ctx.read_vcard(cards.len())?;
@@ -154,10 +154,9 @@ impl<'a> Ctx<'a> {
         loop {
             match self.read_event()? {
                 Event::Start(e) => {
-                    if local_name(
-                        e.name()
-                            .as_ref(),
-                    ) == b"vcard"
+                    if e.local_name()
+                        .as_ref()
+                        == "vcard"
                     {
                         let card = self.read_vcard(cards.len())?;
                         cards.push(card);
@@ -185,7 +184,7 @@ impl<'a> Ctx<'a> {
                     let name = element_name(&e);
                     if name == "group" {
                         let path = format!("vcard[{index}] 'group'");
-                        let group = self.attr_text(&e, b"name", &path);
+                        let group = self.attr_text(&e, "name", &path);
                         if group.is_none() {
                             self.lost(&path, "group element has no name attribute", None);
                         }
@@ -258,7 +257,7 @@ impl<'a> Ctx<'a> {
 
         loop {
             let event = self.read_event()?;
-            if let Some(text) = self.char_data(&path, &event)? {
+            if let Some(text) = self.char_data(&path, &event) {
                 loose_text.push_str(&text);
                 continue;
             }
@@ -411,7 +410,7 @@ impl<'a> Ctx<'a> {
 
         loop {
             let event = self.read_event()?;
-            if let Some(text) = self.char_data(path, &event)? {
+            if let Some(text) = self.char_data(path, &event) {
                 loose_text.push_str(&text);
                 continue;
             }
@@ -442,7 +441,7 @@ impl<'a> Ctx<'a> {
         let mut text = String::new();
         loop {
             let event = self.read_event()?;
-            if let Some(chunk) = self.char_data(path, &event)? {
+            if let Some(chunk) = self.char_data(path, &event) {
                 text.push_str(&chunk);
                 continue;
             }
@@ -465,25 +464,21 @@ impl<'a> Ctx<'a> {
 
     /// Character content carried by an event, `None` for events that carry
     /// none.
-    fn char_data(&mut self, path: &str, event: &Event<'_>) -> Result<Option<String>, Error> {
-        // NG9-1-1 documents are XML 1.0 and no declared version is tracked,
-        // so end-of-line normalization follows XML 1.0 rules.
-        Ok(match event {
+    fn char_data(&mut self, path: &str, event: &Event<'_>) -> Option<String> {
+        // No declared version is tracked and xCard is XML 1.0, so end-of-line
+        // normalization follows XML 1.0 rules.
+        match event {
             Event::Text(e) => Some(
                 e.xml_content(XmlVersion::Implicit1_0)
-                    .map_err(xml_err)?
                     .into_owned(),
             ),
             Event::CData(e) => Some(
                 e.xml_content(XmlVersion::Implicit1_0)
-                    .map_err(xml_err)?
                     .into_owned(),
             ),
             Event::GeneralRef(e) => {
-                let body = e
-                    .decode()
-                    .map_err(xml_err)?;
-                Some(match resolve_reference(&body) {
+                let body = e.as_ref();
+                Some(match resolve_reference(body) {
                     Some(resolved) => resolved,
                     None => {
                         let literal = format!("&{body};");
@@ -493,25 +488,28 @@ impl<'a> Ctx<'a> {
                 })
             }
             _ => None,
-        })
+        }
     }
 
-    fn attr_text(&mut self, e: &BytesStart<'_>, key: &[u8], path: &str) -> Option<String> {
+    fn attr_text(&mut self, e: &BytesStart<'_>, key: &str, path: &str) -> Option<String> {
         for attr in e
             .attributes()
             .flatten()
         {
-            if local_name(
-                attr.key
-                    .as_ref(),
-            ) != key
+            if attr
+                .key
+                .local_name()
+                .as_ref()
+                != key
             {
                 continue;
             }
             return match attr.normalized_value(XmlVersion::Implicit1_0) {
                 Ok(value) => Some(value.into_owned()),
                 Err(_) => {
-                    let raw = String::from_utf8_lossy(&attr.value).into_owned();
+                    let raw = attr
+                        .value
+                        .into_owned();
                     self.lost(
                         path,
                         "attribute holds an unresolvable reference",
@@ -560,23 +558,11 @@ fn xml_err(e: impl std::error::Error + Send + Sync + 'static) -> Error {
     Error::InvalidXml(Box::new(e))
 }
 
-fn local_name(name: &[u8]) -> &[u8] {
-    match name
-        .iter()
-        .position(|&b| b == b':')
-    {
-        Some(pos) => &name[pos + 1..],
-        None => name,
-    }
-}
-
 /// Local element name, lowercased per RFC 6351 §5.1.
 fn element_name(e: &BytesStart<'_>) -> String {
-    String::from_utf8_lossy(local_name(
-        e.name()
-            .as_ref(),
-    ))
-    .to_ascii_lowercase()
+    e.local_name()
+        .as_ref()
+        .to_ascii_lowercase()
 }
 
 /// Resolves a reference body — the text between `&` and `;` — to its content.
