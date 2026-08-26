@@ -184,3 +184,21 @@ This means `Property::new("FN", ...)` produces a property with name
 is eager and visible: callers who inspect `property.name` immediately
 see the lowercased form, so there are no surprises at serialization
 time.
+
+## The xCard reader
+
+Element matching strips the prefix and never looks at the namespace
+binding. The reader is handed fragments lifted out of a parent document
+— an Additional Data block carrying a card — where the `xmlns` sits on
+an ancestor outside the text passed in, so flagging an unbound prefix
+would refuse exactly the input this exists to read.
+
+The version property is synthesized rather than read: xCard carries the
+version in its namespace and has no such property, so warning about its
+absence would report every conformant card as defective.
+
+Which properties are structured is a table keyed on property name. A
+repeated child element means a different thing per property — one
+component of a structured value repeated, a list that is itself a single
+structured value, or several values of one property — and arity cannot
+tell them apart, so a property added means an entry added.
