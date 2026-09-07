@@ -20,8 +20,8 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidJson(e) => write!(f, "invalid JSON: {e}"),
-            Self::InvalidXml(e) => write!(f, "invalid XML: {e}"),
+            Self::InvalidJson(_) => write!(f, "invalid JSON"),
+            Self::InvalidXml(_) => write!(f, "invalid XML"),
             Self::InvalidStructure(msg) => write!(f, "invalid jCard structure: {msg}"),
         }
     }
