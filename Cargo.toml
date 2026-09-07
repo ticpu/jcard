@@ -10,7 +10,13 @@ repository = "https://github.com/ticpu/jcard"
 documentation = "https://docs.rs/jcard"
 keywords = ["jcard", "vcard", "rfc7095", "json", "serde"]
 categories = ["encoding", "parser-implementations"]
-exclude = ["hooks/", ".gitleaks.toml", "CLAUDE.md"]
+exclude = [
+	"CLAUDE.md",
+	"hooks/",
+	".claude/",
+	".gitleaks.toml",
+	"scripts/",
+]
 
 [features]
 lenient-deserialize = []

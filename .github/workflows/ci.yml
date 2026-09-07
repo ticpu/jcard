@@ -13,11 +13,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
+    - name: Cargo.lock must not be tracked
+      run: |
+        if [ -n "$(git ls-files Cargo.lock)" ]; then
+          echo "Cargo.lock is tracked; it belongs only on release tags." >&2
+          exit 1
+        fi
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: clippy, rustfmt
     - run: cargo fmt --all -- --check
     - run: cargo clippy --all-targets -- -D warnings
+    - run: cargo clippy --all-targets --all-features -- -D warnings
     - run: cargo test
     - run: cargo test --features lenient-deserialize
-    - run: RUSTDOCFLAGS="-D missing_docs -D rustdoc::broken_intra_doc_links" cargo doc --no-deps
+    - run: cargo test --all-features
+    - run: RUSTDOCFLAGS="-D missing_docs -D rustdoc::broken_intra_doc_links" cargo doc --no-deps --all-features

@@ -17,25 +17,25 @@ The pre-commit hook runs gitleaks to enforce this.
 
 ## Release Workflow
 
-### Pre-release checks
+`.claude/commands/release.md` (`/release`) is the canonical process:
+`scripts/release-check.sh`, changelog to `scratch/`, `scripts/release-tag.sh`
+(Cargo.lock pinned on the detached tag commit only — never on master), push
+and wait for CI green, then `cargo publish` run directly — publish is
+irrevocable and is never wrapped in a script. Never publish without the tag
+pushed and CI green on master.
+
+Install the hooks once per clone: `hooks/install.sh`.
+
+## RFC Reference Texts
+
+`rfc/` is gitignored, so the specs stay out of the repo and out of the
+published package. Fetch them there when needed:
 
 ```sh
-cargo fmt --all
-cargo clippy --release -- -D warnings
-cargo test --release
-cargo build --release
-cargo semver-checks check-release
-cargo publish --dry-run
+mkdir -p rfc
+curl -o rfc/rfc7095.txt https://www.rfc-editor.org/rfc/rfc7095.txt
+curl -o rfc/rfc6351.txt https://www.rfc-editor.org/rfc/rfc6351.txt
 ```
-
-### Publish
-
-**Never `cargo publish` without completing these steps first:**
-
-1. Create signed annotated tags (`git tag -as`)
-2. Push the tags (`git push --tags`)
-3. Wait for CI to pass on the tagged commit
-4. Only then `cargo publish`
 
 ## Build & Test
 

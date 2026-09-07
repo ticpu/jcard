@@ -3,6 +3,19 @@
 
 set -e
 
+# Cargo.lock belongs only on the detached commit a release tag points at, so a
+# release build resolves an exact dependency set while master stays a library
+# crate with the lock gitignored. Detached HEAD is the whole signal: on a
+# branch, staging it is always the "forgot to git checkout --detach" mistake.
+if git diff --cached --name-only | grep -q '^Cargo\.lock$'; then
+    if git symbolic-ref -q HEAD >/dev/null; then
+        echo "Cargo.lock is staged on branch $(git symbolic-ref --short HEAD)."
+        echo "It may only be committed on the release tag's own detached commit."
+        echo "Run 'git checkout --detach' first, then stage and commit it."
+        exit 1
+    fi
+fi
+
 echo "Checking for assert! outside tests..."
 found_assert=0
 for file in src/*.rs; do
@@ -52,6 +65,13 @@ echo "Running tests (lenient-deserialize)..."
 if ! test_output=$(cargo test --features lenient-deserialize 2>&1); then
     echo "$test_output" | tail
     echo "Tests failed (lenient-deserialize). Fix them before committing."
+    exit 1
+fi
+
+echo "Running tests (all features)..."
+if ! test_output=$(cargo test --all-features 2>&1); then
+    echo "$test_output" | tail
+    echo "Tests failed (all features). Fix them before committing."
     exit 1
 fi
 
