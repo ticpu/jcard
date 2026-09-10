@@ -203,6 +203,95 @@ impl JCard {
             .collect()
     }
 
+    /// Returns the text of the first property with the given name.
+    ///
+    /// `None` when the property is absent or its value carries no text.
+    pub fn text(&self, name: &str) -> Option<&str> {
+        self.get(name)?
+            .as_str()
+    }
+
+    /// Returns the text of every property with the given name, in document
+    /// order. Instances whose value carries no text are omitted.
+    pub fn texts(&self, name: &str) -> Vec<&str> {
+        self.get_all(name)
+            .into_iter()
+            .filter_map(Property::as_str)
+            .collect()
+    }
+
+    /// Returns the components of the first property with the given name.
+    ///
+    /// `None` when the property is absent or its value is not structured.
+    pub fn components(&self, name: &str) -> Option<&[StructuredComponent]> {
+        self.get(name)?
+            .components()
+    }
+
+    /// Returns the `FN` (formatted name) property's text.
+    pub fn fn_(&self) -> Option<&str> {
+        self.text("fn")
+    }
+
+    /// Returns the components of the `N` (structured name) property, family
+    /// name first per RFC 6350 §6.2.2.
+    pub fn n(&self) -> Option<&[StructuredComponent]> {
+        self.components("n")
+    }
+
+    /// Returns the `ORG` property's text.
+    pub fn org(&self) -> Option<&str> {
+        self.text("org")
+    }
+
+    /// Returns the `TITLE` property's text.
+    pub fn title(&self) -> Option<&str> {
+        self.text("title")
+    }
+
+    /// Returns the `BDAY` (birthday) property's text.
+    pub fn bday(&self) -> Option<&str> {
+        self.text("bday")
+    }
+
+    /// Returns the `REV` (revision) property's text.
+    pub fn rev(&self) -> Option<&str> {
+        self.text("rev")
+    }
+
+    /// Returns the text of every `EMAIL` property.
+    pub fn emails(&self) -> Vec<&str> {
+        self.texts("email")
+    }
+
+    /// Returns the text of every `TEL` property.
+    pub fn tels(&self) -> Vec<&str> {
+        self.texts("tel")
+    }
+
+    /// Returns the text of every `URL` property.
+    pub fn urls(&self) -> Vec<&str> {
+        self.texts("url")
+    }
+
+    /// Returns the text of every `NOTE` property.
+    pub fn notes(&self) -> Vec<&str> {
+        self.texts("note")
+    }
+
+    /// Returns the text of every `LANG` property.
+    pub fn langs(&self) -> Vec<&str> {
+        self.texts("lang")
+    }
+
+    /// Returns the components of every `ADR` property, per RFC 6350 §6.3.1.
+    pub fn adrs(&self) -> Vec<&[StructuredComponent]> {
+        self.get_all("adr")
+            .into_iter()
+            .filter_map(Property::components)
+            .collect()
+    }
+
     /// Parses a jCard from a [`serde_json::Value`] with lenient error handling.
     ///
     /// Returns [`Parsed<JCard>`] containing the best-effort parse result
@@ -989,5 +1078,86 @@ mod tests {
             "unexpected warnings: {:?}",
             parsed.warnings
         );
+    }
+
+    #[test]
+    fn typed_accessors_read_appendix_b() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["fn",{},"text","John Doe"],
+            ["n",{},"text",["Doe","John","","",""]],
+            ["bday",{},"date-and-or-time","--02-03"],
+            ["lang",{"pref":"1"},"language-tag","fr"],
+            ["tel",{"type":["work","voice"],"pref":"1"},"uri","tel:+15551234567;ext=102"],
+            ["email",{"type":"work"},"text","john.doe@example.com"],
+            ["email",{},"text","jdoe@example.org"]
+        ]]"#;
+
+        let jcard: JCard = serde_json::from_str(json).unwrap();
+        assert_eq!(jcard.fn_(), Some("John Doe"));
+        assert_eq!(jcard.bday(), Some("--02-03"));
+        assert_eq!(jcard.tels(), vec!["tel:+15551234567;ext=102"]);
+        assert_eq!(jcard.langs(), vec!["fr"]);
+        assert_eq!(
+            jcard.emails(),
+            vec!["john.doe@example.com", "jdoe@example.org"]
+        );
+        assert_eq!(jcard.org(), None);
+
+        let n = jcard
+            .n()
+            .unwrap();
+        assert_eq!(n[0].as_str(), Some("Doe"));
+        assert_eq!(n[1].as_str(), Some("John"));
+    }
+
+    #[test]
+    fn as_str_none_for_non_text_values() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["n",{},"text",["Doe","John","","",""]],
+            ["x-non-smoking",{},"boolean",true],
+            ["x-karma-points",{},"integer",42]
+        ]]"#;
+
+        let jcard: JCard = serde_json::from_str(json).unwrap();
+        assert_eq!(jcard.text("n"), None);
+        assert_eq!(jcard.text("x-non-smoking"), None);
+        assert_eq!(jcard.text("x-karma-points"), None);
+        assert!(jcard
+            .texts("n")
+            .is_empty());
+    }
+
+    #[test]
+    fn pref_parameter_read_not_applied() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["fn",{},"text","J. Doe"],
+            ["fn",{"pref":"1"},"text","John Doe"]
+        ]]"#;
+
+        let jcard: JCard = serde_json::from_str(json).unwrap();
+        assert_eq!(jcard.fn_(), Some("J. Doe"));
+
+        let all = jcard.get_all("fn");
+        assert_eq!(all[0].pref(), None);
+        assert_eq!(all[1].pref(), Some(1));
+    }
+
+    #[test]
+    fn adr_components_expose_multi() {
+        let json = r#"["vcard",[
+            ["version",{},"text","4.0"],
+            ["adr",{},"text",
+                ["","",["123 Main St","Suite 100"],"Any Town","CA","91921","U.S.A."]
+            ]
+        ]]"#;
+
+        let jcard: JCard = serde_json::from_str(json).unwrap();
+        let adrs = jcard.adrs();
+        assert_eq!(adrs.len(), 1);
+        assert_eq!(adrs[0][2].as_str(), None);
+        assert_eq!(adrs[0][3].as_str(), Some("Any Town"));
     }
 }

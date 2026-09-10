@@ -105,6 +105,16 @@ pub enum StructuredComponent {
     Multi(Vec<String>),
 }
 
+impl StructuredComponent {
+    /// Returns the component's text, or `None` when it holds several values.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(s) => Some(s),
+            Self::Multi(_) => None,
+        }
+    }
+}
+
 impl fmt::Display for StructuredComponent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -184,6 +194,24 @@ impl fmt::Display for PropertyValue {
 }
 
 impl PropertyValue {
+    /// Returns the text this value carries, or `None` for variants that carry
+    /// none.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(s)
+            | Self::Uri(s)
+            | Self::Date(s)
+            | Self::Time(s)
+            | Self::DateTime(s)
+            | Self::DateAndOrTime(s)
+            | Self::Timestamp(s)
+            | Self::UtcOffset(s)
+            | Self::LanguageTag(s)
+            | Self::Unknown(s) => Some(s),
+            Self::Boolean(_) | Self::Integer(_) | Self::Float(_) | Self::Structured(_) => None,
+        }
+    }
+
     /// Returns the default RFC 7095 type identifier for this value variant.
     pub fn default_type(&self) -> &'static str {
         match self {
@@ -429,6 +457,36 @@ impl Property {
     /// Multi-valued properties (RFC 7095 §3.3) return multiple elements.
     pub fn values(&self) -> &[PropertyValue] {
         &self.values
+    }
+
+    /// Returns the text of the first value, or `None` when that value carries
+    /// none.
+    pub fn as_str(&self) -> Option<&str> {
+        self.value()
+            .as_str()
+    }
+
+    /// Returns the rank of the `PREF` parameter (RFC 6350 §5.3), or `None`
+    /// when it is absent, multi-valued or not an integer.
+    pub fn pref(&self) -> Option<u32> {
+        match self
+            .parameters
+            .get("pref")?
+        {
+            ParamValue::Single(s) => s
+                .parse()
+                .ok(),
+            ParamValue::Multiple(_) => None,
+        }
+    }
+
+    /// Returns the components of a structured value, or `None` when the value
+    /// is not structured.
+    pub fn components(&self) -> Option<&[StructuredComponent]> {
+        match self.value() {
+            PropertyValue::Structured(components) => Some(components),
+            _ => None,
+        }
     }
 
     /// Adds a parameter to this property (builder pattern).

@@ -38,6 +38,25 @@ let parsed: JCard = serde_json::from_str(&json).unwrap();
 assert_eq!(jcard, parsed);
 ```
 
+### Reading properties
+
+```rust
+use jcard::JCard;
+
+let jcard: JCard = r#"["vcard",[
+    ["version",{},"text","4.0"],
+    ["fn",{},"text","Jane Doe"],
+    ["email",{"type":"work"},"text","jane.doe@example.com"]
+]]"#.parse().unwrap();
+
+assert_eq!(jcard.fn_(), Some("Jane Doe"));
+assert_eq!(jcard.emails(), vec!["jane.doe@example.com"]);
+assert_eq!(jcard.org(), None);
+```
+
+Accessors return the first instance in document order. `PREF` (RFC 6350
+§5.3) is read through `Property::pref`, never applied by this crate.
+
 ### Lenient parsing with warnings
 
 ```rust
