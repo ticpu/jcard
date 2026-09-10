@@ -207,3 +207,19 @@ repeated child element means a different thing per property — one
 component of a structured value repeated, a list that is itself a single
 structured value, or several values of one property — and arity cannot
 tell them apart, so a property added means an entry added.
+
+## Typed read accessors
+
+A property the builder names is named on the read side too. Otherwise the
+consumer keeps its own copy of which value variant that property arrives
+in, and the two drift.
+
+Extracting a string is fallible and stays fallible: only the
+string-carrying value variants yield one. A structured, numeric or
+boolean value where text was expected is a data problem the caller has to
+see, so it reads as absent rather than being flattened through `Display`.
+
+Several instances of one property are returned in document order, and
+preference ranking is exposed rather than applied. Which instance wins is
+the caller's policy — a display surface and a routing decision do not
+want the same one.
